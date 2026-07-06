@@ -53,10 +53,16 @@ Verlauf), `gap` (Dropout-Marker, EW-39). Schema-Version in `riftrec/__init__.py:
 
 ## Stand (2026-07-06)
 
-Fertig & hardware-los getestet: Recorder-Kern (Milestones 0–3) — Skelett+SQLite-Vertrag,
-H10Source (0x2A37-Parser), RiotSource (Poll/Dedup/Snapshot/Game-Ende), zwei Quellen → eine
-Session. **Offen:** Viewer in RiftLab (EW-31/36), echter E2E-Lauf mit getragenem H10 (EW-37),
-danach Pilot-Härtung (Tray/Settings EW-38, Reconnect+`gap` EW-39, Pflicht-Metadaten EW-41).
+**End-to-End gegen echte Hardware validiert (M0–M5, EW-26/EW-37 erfüllt).** Recorder-Kern
+(Skelett+SQLite-Vertrag, H10Source/0x2A37-Parser, RiotSource mit Poll/Dedup/Snapshot/Game-Ende,
+zwei Quellen → eine Session) plus RiftLab-Viewer (EW-31/36). Realer Lauf: getragener Polar H10
+(HR/RR über volle 180 s) + laufendes LoL-Practice-Tool über `--source h10,riot` — Live-Events
+(10× ChampionKill/FirstBlood/Multikill, korrekt dedupliziert), Snapshots mit korrektem
+Spieler-Matching (riotId), Zeitsync H10↔Riot, Chart aus dem SQLite-Vertrag: HR-Spitze fällt
+mit dem Kill-Cluster zusammen, HRV (RMSSD) gegenläufig.
+
+**Offen:** Pilot-Härtung — Tray/Settings-UI (EW-38), Auto-Reconnect + `gap`-Logging bei
+BLE-Dropout (EW-39), Pflicht-Metadaten participant/session (EW-41), Self-Report NASA-TLX/PANAS.
 
 ## Setup
 

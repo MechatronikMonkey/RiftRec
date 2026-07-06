@@ -1,16 +1,16 @@
-"""RiotSource - Riot Live Client Data API als Signalquelle (EW-28/33).
+"""RiotSource - Riot Live Client Data API as a signal source (EW-28/33).
 
-Pollt `/liveclientdata/allgamedata` (lokal, self-signed Cert, nur während eines
-laufenden Matches) auf festem Intervall und emittiert:
-- GameEvent je neuem Event (nach Riot-EventID dedupliziert)
-- GameSnapshot des aktiven Spielers alle `snapshot_interval_s` (KDA/CS/Gold)
+Polls `/liveclientdata/allgamedata` (local, self-signed cert, only during a
+running match) at a fixed interval and emits:
+- one GameEvent per new event (deduplicated by Riot EventID)
+- one GameSnapshot of the active player every `snapshot_interval_s` (KDA/CS/gold)
 
-Game-Start = erster erreichbarer Poll; Game-Ende = Endpoint nicht mehr
-erreichbar (Match vorbei) ODER ein GameEnd-Event. Endet die Quelle, beendet die
-Runtime die Session (siehe RecorderRuntime._supervise).
+Game start = first reachable poll; game end = endpoint no longer reachable
+(match over) OR a GameEnd event. When the source ends, the runtime closes the
+session (see RecorderRuntime._supervise).
 
-Der HTTP-Zugriff ist über `fetch` injizierbar, damit die Logik ohne laufendes
-LoL-Match getestet werden kann.
+The HTTP access is injectable via `fetch` so the logic can be tested without a
+running LoL match.
 """
 
 from __future__ import annotations
@@ -26,19 +26,19 @@ from .base import EmitFn
 DEFAULT_BASE_URL = "https://127.0.0.1:2999"
 _ALLGAMEDATA = "/liveclientdata/allgamedata"
 
-# () -> dict des allgamedata-JSON, oder None wenn der Endpoint nicht erreichbar
-# ist (kein Match aktiv / Match beendet).
+# () -> dict of the allgamedata JSON, or None when the endpoint is unreachable
+# (no match active / match ended).
 FetchFn = Callable[[], Awaitable[Optional[dict]]]
 
 
 def new_events(events: list[dict], last_id: Optional[int]) -> list[dict]:
-    """Events mit EventID > last_id, aufsteigend sortiert."""
+    """Events with EventID > last_id, sorted ascending."""
     fresh = [e for e in events if last_id is None or e.get("EventID", -1) > last_id]
     return sorted(fresh, key=lambda e: e.get("EventID", 0))
 
 
 def _find_active_row(data: dict) -> dict:
-    """Scoreboard-Zeile des aktiven Spielers in allPlayers finden (robust über
+    """Find the active player's scoreboard row in allPlayers (robust across
     summonerName / riotId / riotIdGameName)."""
     active = data.get("activePlayer") or {}
     name = active.get("summonerName") or active.get("riotIdGameName")
@@ -100,7 +100,7 @@ class RiotSource:
                 data = await fetch()
                 if data is None:
                     if started:
-                        return  # Match vorbei -> Quelle endet, Session schließt
+                        return  # match over -> source ends, session closes
                     await asyncio.sleep(self._poll_interval_s)
                     continue
                 started = True
@@ -131,7 +131,7 @@ class RiotSource:
             await close()
 
     def _make_fetch(self) -> tuple[FetchFn, Callable[[], Awaitable[None]]]:
-        """Liefert (fetch, close). Bei injiziertem fetch ist close ein No-Op."""
+        """Return (fetch, close). With an injected fetch, close is a no-op."""
         if self._fetch is not None:
             async def _noop() -> None:
                 return None
@@ -146,7 +146,7 @@ class RiotSource:
             try:
                 resp = await client.get(self._url)
             except httpx.RequestError:
-                return None  # nicht erreichbar => kein Match aktiv / beendet
+                return None  # unreachable => no match active / ended
             if resp.status_code != 200:
                 return None
             try:

@@ -1,10 +1,9 @@
-"""Gemeinsame Session-Uhr für alle Quellen.
+"""Shared session clock for all sources.
 
-Beim Anlegen wird ein Anker aus Wall-Clock (UTC) und Monotonic-Uhr
-festgehalten. `now()` leitet den UTC-Zeitstempel aus dem Anker plus der
-seither vergangenen Monotonic-Zeit ab — nicht aus einem frischen
-`datetime.now()`. Dadurch ist die Ausrichtung immun gegen NTP-Sprünge
-mitten in der Session, während `mono_ns` die präzise Ordnung liefert.
+On creation it captures an anchor from wall-clock (UTC) and the monotonic clock.
+`now()` derives the UTC timestamp from the anchor plus the monotonic time
+elapsed since - not from a fresh `datetime.now()`. This keeps alignment immune
+to NTP jumps mid-session, while `mono_ns` provides precise ordering.
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ class SessionClock:
         return self._utc0.isoformat()
 
     def now(self) -> tuple[int, str]:
-        """(mono_ns, utc_iso) für den aktuellen Moment."""
+        """(mono_ns, utc_iso) for the current moment."""
         mono = time.perf_counter_ns()
         utc = self._utc0 + timedelta(microseconds=(mono - self._mono0) / 1000)
         return mono, utc.isoformat()

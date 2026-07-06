@@ -1,8 +1,8 @@
-"""FakeSource - synthetische Quelle, um die Pipe ohne Hardware zu prüfen.
+"""FakeSource - synthetic source to exercise the pipe without hardware.
 
-Emittiert pro Tick einen HR-Wert plus das zugehörige RR-Intervall und streut
-ein paar Game-Events ein. So lässt sich das gesamte Runtime→Sink→SQLite-
-Zusammenspiel testen, ohne H10 oder laufendes LoL-Match.
+Emits one HR value plus its RR interval per tick and sprinkles in a few game
+events. Lets us test the whole runtime->sink->SQLite interplay without an H10
+or a running LoL match.
 """
 
 from __future__ import annotations
@@ -15,8 +15,8 @@ from ..clock import SessionClock
 from ..model import GameEvent, HrSample, RrInterval
 from .base import EmitFn
 
-# Ein kleines Skript aus (Tick, EventTyp), an dem sich die Zeit-Ausrichtung
-# später manuell prüfen lässt (Death sollte auf einen HR-Ausschlag fallen).
+# A small script of (tick, event type) so the time alignment can later be
+# checked by hand (a death should land on an HR spike).
 _SCRIPTED_EVENTS = {3: "ChampionKill", 6: "TurretKilled", 8: "ChampionKill"}
 
 
@@ -30,7 +30,7 @@ class FakeSource:
     async def run(self, emit: EmitFn, clock: SessionClock) -> None:
         for i in range(self._ticks):
             mono, utc = clock.now()
-            # HR schwingt um 78 bpm, mit einem Ausschlag rund um die Events.
+            # HR oscillates around 78 bpm, with a bump around the events.
             hr = 78 + int(12 * math.sin(i / 2.0))
             emit(HrSample(mono_ns=mono, utc=utc, hr_bpm=hr))
             emit(RrInterval(mono_ns=mono, utc=utc, rr_ms=60000.0 / hr))

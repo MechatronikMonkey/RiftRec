@@ -1,4 +1,4 @@
-"""Milestone-1-Tests ohne Hardware: 0x2A37-Parser + H10Source via Fake-Transport."""
+"""Milestone-1 tests without hardware: 0x2A37 parser + H10Source via a fake transport."""
 
 from __future__ import annotations
 
@@ -11,14 +11,14 @@ from riftrec.sources.h10 import HR_MEASUREMENT_UUID, H10Source, parse_hr_measure
 
 
 def test_parse_uint8_no_rr() -> None:
-    # flags=0x00 (uint8 HR, kein RR), HR=75
+    # flags=0x00 (uint8 HR, no RR), HR=75
     hr, rr = parse_hr_measurement(bytes([0x00, 75]))
     assert hr == 75
     assert rr == []
 
 
 def test_parse_uint8_with_rr() -> None:
-    # flags=0x10 (RR vorhanden), HR=80, RR=1024/1024s -> 1000 ms, dann 512 -> 500 ms
+    # flags=0x10 (RR present), HR=80, RR=1024/1024s -> 1000 ms, then 512 -> 500 ms
     payload = bytes([0x10, 80, 0x00, 0x04, 0x00, 0x02])
     hr, rr = parse_hr_measurement(payload)
     assert hr == 80
@@ -33,7 +33,7 @@ def test_parse_uint16_hr() -> None:
 
 
 def test_parse_energy_then_rr_skipped() -> None:
-    # flags=0x18 (Energy + RR), HR=60, Energy=2 Bytes übersprungen, RR=256 -> 250 ms
+    # flags=0x18 (Energy + RR), HR=60, Energy 2 bytes skipped, RR=256 -> 250 ms
     payload = bytes([0x18, 60, 0xFF, 0xFF, 0x00, 0x01])
     hr, rr = parse_hr_measurement(payload)
     assert hr == 60
@@ -41,7 +41,7 @@ def test_parse_energy_then_rr_skipped() -> None:
 
 
 class _FakeTransport:
-    """Spielt ein Skript von Payloads in den Notify-Callback ab."""
+    """Plays a script of payloads into the notify callback."""
 
     def __init__(self, payloads: list[bytes]) -> None:
         self._payloads = payloads
@@ -80,7 +80,7 @@ class _FakeTransport:
 def test_h10source_emits_records() -> None:
     payloads = [
         bytes([0x10, 80, 0x00, 0x04]),  # HR 80, RR 1000 ms
-        bytes([0x00, 82]),              # HR 82, kein RR
+        bytes([0x00, 82]),              # HR 82, no RR
     ]
     transport = _FakeTransport(payloads)
     source = H10Source(transport=transport)
@@ -89,7 +89,7 @@ def test_h10source_emits_records() -> None:
 
     async def drive() -> None:
         task = asyncio.create_task(source.run(emitted.append, clock))
-        await asyncio.sleep(0.05)  # Subscribe + Callbacks laufen lassen
+        await asyncio.sleep(0.05)  # let subscribe + callbacks run
         task.cancel()
         try:
             await task
@@ -110,4 +110,4 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(fn):
             fn()
             print(f"OK - {name}")
-    print("OK - alle H10-Tests bestanden")
+    print("OK - all H10 tests passed")

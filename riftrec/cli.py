@@ -1,8 +1,8 @@
-"""CLI-Front-End für RiftRec.
+"""CLI front-end for RiftRec.
 
-Dünn gehalten: parst Argumente in eine RecorderConfig, baut Quellen + Sink,
-und lässt die RecorderRuntime laufen. Das spätere Tray/Settings-Front-End
-(EW-38) tritt an dieselbe Stelle, ohne Kern-Code zu ändern.
+Kept thin: parses arguments into a RecorderConfig, builds sources + sink, and
+runs the RecorderRuntime. The later tray/settings front-end (EW-38) plugs into
+the same place without touching core code.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ def _build_sources(config: RecorderConfig) -> list[SignalSource]:
                 snapshot_interval_s=config.snapshot_interval_s,
             ))
         else:
-            raise SystemExit(f"Unbekannte Quelle: {name!r} (erlaubt: fake, h10, riot)")
+            raise SystemExit(f"Unknown source: {name!r} (allowed: fake, h10, riot)")
     return sources
 
 
@@ -53,27 +53,27 @@ async def _run(config: RecorderConfig) -> None:
         notes=config.notes,
     )
     runtime.status.subscribe(lambda s: print(f"[state] {s.value}"))
-    print(f"Aufnahme startet -> {config.db_path}")
+    print(f"Recording starts -> {config.db_path}")
     session_id = await runtime.run()
-    print(f"Session {session_id} abgeschlossen.")
+    print(f"Session {session_id} finished.")
 
 
 def _parse_args(argv: list[str] | None) -> RecorderConfig:
-    parser = argparse.ArgumentParser(prog="riftrec", description="RiftRec Recorder")
+    parser = argparse.ArgumentParser(prog="riftrec", description="RiftRec recorder")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    rec = sub.add_parser("record", help="Eine Session aufzeichnen")
+    rec = sub.add_parser("record", help="Record a session")
     rec.add_argument("--participant", dest="participant_id", default=None)
     rec.add_argument("--session", dest="session_index", type=int, default=None)
     rec.add_argument("--notes", default=None)
     rec.add_argument(
         "--source", dest="sources", default="fake",
-        help="Kommagetrennt: fake, h10, riot (z. B. --source h10,riot)",
+        help="Comma-separated: fake, h10, riot (e.g. --source h10,riot)",
     )
     rec.add_argument("--db", dest="db_path", default="riftrec_session.sqlite")
     rec.add_argument("--seconds", dest="duration_s", type=float, default=None,
-                     help="Optionale feste Laufzeit; sonst bis Ctrl+C / Quellen-Ende")
-    rec.add_argument("--device", default=None, help="H10 Name/Adresse (sonst Auto-Scan)")
+                     help="Optional fixed runtime; otherwise until Ctrl+C / sources end")
+    rec.add_argument("--device", default=None, help="H10 name/address (otherwise auto-scan)")
     rec.add_argument("--poll-interval", dest="poll_interval_s", type=float, default=1.0)
     rec.add_argument("--snapshot-interval", dest="snapshot_interval_s", type=float, default=5.0)
 
@@ -96,7 +96,7 @@ def main(argv: list[str] | None = None) -> None:
     try:
         asyncio.run(_run(config))
     except KeyboardInterrupt:
-        print("\nAbbruch - Session wird geschlossen.")
+        print("\nAborted - closing session.")
 
 
 if __name__ == "__main__":

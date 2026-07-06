@@ -1,4 +1,4 @@
-"""Laufzeit-Konfiguration des Recorders."""
+"""Runtime configuration of the recorder."""
 
 from __future__ import annotations
 
@@ -9,22 +9,22 @@ from typing import Optional
 
 @dataclass
 class RecorderConfig:
-    # Session-Metadaten (im Demo optional, in der Pilot-Härtung Pflicht - EW-41)
+    # Session metadata (optional in the demo, mandatory for the pilot - EW-41)
     participant_id: Optional[str] = None
     session_index: Optional[int] = None
     notes: Optional[str] = None
 
-    # Welche Quellen laufen: Teilmenge von {"fake", "h10", "riot"}
+    # Which sources run: subset of {"fake", "h10", "riot"}
     sources: list[str] = field(default_factory=lambda: ["fake"])
 
-    # Ausgabe
+    # Output
     db_path: Path = Path("riftrec_session.sqlite")
 
-    # Laufzeit-Steuerung
+    # Runtime control
     duration_s: Optional[float] = None
 
     # H10 (BLE)
-    device: Optional[str] = None  # Name oder Adresse; None => automatisch scannen
+    device: Optional[str] = None  # name or address; None => scan automatically
 
     # Riot Live Client Data API
     poll_interval_s: float = 1.0

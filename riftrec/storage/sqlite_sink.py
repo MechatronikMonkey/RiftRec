@@ -1,9 +1,9 @@
-"""SQLite-Session-Sink (WAL).
+"""SQLite session sink (WAL).
 
-Puffert Records nach Tabelle und schreibt sie gebündelt per executemany.
-WAL-Modus sorgt dafür, dass committete Daten einen Absturz oder BLE-Dropout
-mitten in der Session überleben (EW-39). Ein Sink schreibt genau eine Session
-in genau eine .sqlite-Datei; diese Datei ist der Vertrag zu RiftLab.
+Buffers records per table and writes them in batches via executemany. WAL mode
+ensures that committed data survives a crash or a BLE dropout mid-session
+(EW-39). One sink writes exactly one session into exactly one .sqlite file; that
+file is the contract to RiftLab.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ class SqliteSink:
         self._db_path = Path(db_path)
         self._conn: sqlite3.Connection | None = None
         self._session_id: str | None = None
-        # Puffer je Zieltabelle: Liste von Wert-Tupeln für executemany.
+        # Buffer per target table: list of value tuples for executemany.
         self._buf: dict[str, list[tuple]] = {
             "hr_sample": [],
             "rr_interval": [],
@@ -69,8 +69,8 @@ class SqliteSink:
                 record.kills, record.deaths, record.assists,
                 record.cs, record.gold, record.level,
             ))
-        else:  # pragma: no cover - Schutz gegen versehentlich neue Record-Typen
-            raise TypeError(f"Unbekannter Record-Typ: {type(record).__name__}")
+        else:  # pragma: no cover - guard against accidentally new record types
+            raise TypeError(f"Unknown record type: {type(record).__name__}")
 
     def flush(self) -> None:
         if self._conn is None:

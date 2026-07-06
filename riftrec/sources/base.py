@@ -1,10 +1,10 @@
-"""SignalSource-Protocol.
+"""SignalSource protocol.
 
-Eine Quelle ist ein async Task. Sie stempelt jeden Record über die injizierte
-`SessionClock` bei Ankunft der Daten und übergibt ihn per `emit` an die
-Runtime-Queue. `emit` ist nicht-blockierend (put_nowait auf unbeschränkter
-Queue), damit ein BLE-Notify-Callback nie blockiert. `run` läuft bis zum
-Abbruch (Task-Cancel) oder bis die Quelle natürlich endet.
+A source is an async task. It timestamps every record via the injected
+`SessionClock` when the data arrives and hands it to the runtime queue via
+`emit`. `emit` is non-blocking (put_nowait on an unbounded queue) so a BLE
+notify callback never blocks. `run` runs until cancelled (task cancel) or until
+the source ends naturally.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from typing import Callable, Protocol
 from ..clock import SessionClock
 from ..model import Record
 
-# Von der Runtime bereitgestellt; typischerweise queue.put_nowait.
+# Provided by the runtime; typically queue.put_nowait.
 EmitFn = Callable[[Record], None]
 
 

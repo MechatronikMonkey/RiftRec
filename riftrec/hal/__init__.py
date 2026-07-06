@@ -1,11 +1,11 @@
-"""HAL - Hardware Abstraction Layer für den BLE-Zugriff.
+"""HAL - Hardware Abstraction Layer for BLE access.
 
-Die HAL-Grenze ist bewusst der *BLE-Transport* (scannen, verbinden, auf
-Characteristics notifien/schreiben) - NICHT die Polar-Semantik. Ein späterer
-Wechsel vom Windows-Bleak-Stack auf einen USB-Dongle (nrf52840 + Bumble)
-tauscht nur den Host-BLE-Stack, nicht das Polar-GATT-Protokoll. Deshalb liegt
-alles Polar-Spezifische (HR-/RR-Parsing, später PMD/ECG/ACC) ÜBER dieser
-Schicht in der H10Source; nur die rohen BLE-Primitive stecken dahinter.
+The HAL boundary is deliberately the *BLE transport* (scan, connect, notify on /
+write to characteristics) - NOT the Polar semantics. A later switch from the
+Windows Bleak stack to a USB dongle (nrf52840 + Bumble) swaps only the host BLE
+stack, not the Polar GATT protocol. So everything Polar-specific (HR/RR parsing,
+later PMD/ECG/ACC) lives ABOVE this layer in the H10Source; only the raw BLE
+primitives sit behind it.
 """
 
 from .ble import BleTransport

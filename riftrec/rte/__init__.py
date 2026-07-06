@@ -1,4 +1,4 @@
-"""RTE - Runtime Environment: verdrahtet Quellen, Uhr und Sink zur Session."""
+"""RTE - Runtime Environment: wires sources, clock and sink into a session."""
 
 from .runtime import RecorderRuntime
 from .state import RecorderState

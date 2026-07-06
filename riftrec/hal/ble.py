@@ -1,16 +1,15 @@
-"""BleTransport-Protocol - die austauschbare BLE-Transport-Naht.
+"""BleTransport protocol - the swappable BLE transport seam.
 
-Liefert rohe Notification-Bytes an einen Callback; das Parsen ist Sache der
-darüberliegenden Quelle. `write` wird erst für das PMD-Control-Point (ECG/ACC)
-gebraucht, ist aber Teil des Vertrags, damit der spätere Dongle-Transport
-dieselbe Schnittstelle erfüllt.
+Delivers raw notification bytes to a callback; parsing is the job of the source
+above. `write` is only needed for the PMD control point (ECG/ACC) but is part of
+the contract so the later dongle transport implements the same interface.
 """
 
 from __future__ import annotations
 
 from typing import Callable, Optional, Protocol
 
-# Callback bekommt die rohen Bytes einer Characteristic-Notification.
+# The callback receives the raw bytes of a characteristic notification.
 NotifyCallback = Callable[[bytes], None]
 
 
@@ -25,16 +24,16 @@ class BleTransport(Protocol):
     def name(self) -> Optional[str]: ...
 
     async def connect(self, device: Optional[str] = None) -> None:
-        """Gerät finden und verbinden. `device` = Name/Adress-Teilstring,
-        oder None für Auto-Scan (erstes Gerät mit 'polar' im Namen)."""
+        """Find and connect a device. `device` = name/address substring, or
+        None for auto-scan (first device with 'polar' in its name)."""
         ...
 
     async def subscribe(self, char_uuid: str, callback: NotifyCallback) -> None:
-        """Notifications einer Characteristic an `callback` weiterreichen."""
+        """Forward notifications of a characteristic to `callback`."""
         ...
 
     async def write(self, char_uuid: str, data: bytes, response: bool = True) -> None:
-        """Bytes auf eine Characteristic schreiben (PMD-Control-Point)."""
+        """Write bytes to a characteristic (PMD control point)."""
         ...
 
     async def disconnect(self) -> None: ...

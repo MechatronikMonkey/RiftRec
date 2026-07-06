@@ -1,16 +1,15 @@
-"""H10Source - Polar H10 als Signalquelle über die BLE-HAL.
+"""H10Source - Polar H10 as a signal source over the BLE HAL.
 
-Abonniert den Standard-Heart-Rate-Measurement-Characteristic (0x2A37) und
-parst dessen Payload selbst (Flags + HR + RR-Liste). Damit bleibt die
-Polar-Semantik über der HAL, und der Transport bleibt austauschbar.
+Subscribes to the standard Heart Rate Measurement characteristic (0x2A37) and
+parses its payload itself (flags + HR + RR list). This keeps the Polar semantics
+above the HAL, and the transport stays swappable.
 
-RR-Intervalle kommen in Einheiten von 1/1024 s und werden in ms umgerechnet.
-Eine Notification kann 0..n RR-Intervalle tragen; jedes wird ein eigener
-RrInterval-Record (tragendes HRV-Signal).
+RR intervals arrive in units of 1/1024 s and are converted to ms. A
+notification can carry 0..n RR intervals; each becomes its own RrInterval record
+(the load-bearing HRV signal).
 
-PMD/ECG/ACC ist bewusst NICHT enthalten (auf Windows reproduzierbar defekt,
-siehe README) - der Seam dafür ist die HAL-`write`-Methode plus ein späterer
-PMD-Substream.
+PMD/ECG/ACC is deliberately NOT included (reproducibly broken on Windows, see
+README) - the seam for it is the HAL `write` method plus a later PMD substream.
 """
 
 from __future__ import annotations
@@ -26,18 +25,18 @@ from .base import EmitFn
 # Standard BLE Heart Rate Measurement characteristic.
 HR_MEASUREMENT_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
 
-# Flags-Byte (erstes Byte der Payload)
-_FLAG_HR_16BIT = 0x01   # HR als uint16 statt uint8
-_FLAG_ENERGY = 0x08     # Energy-Expended-Feld vorhanden (übersprungen)
-_FLAG_RR = 0x10         # RR-Intervall-Liste vorhanden
+# Flags byte (first byte of the payload)
+_FLAG_HR_16BIT = 0x01   # HR as uint16 instead of uint8
+_FLAG_ENERGY = 0x08     # Energy Expended field present (skipped)
+_FLAG_RR = 0x10         # RR interval list present
 
 
 def parse_hr_measurement(data: bytes) -> tuple[int, list[float]]:
-    """Zerlegt eine 0x2A37-Payload in (HR in bpm, Liste RR-Intervalle in ms).
+    """Split a 0x2A37 payload into (HR in bpm, list of RR intervals in ms).
 
-    Layout nach BLE-Spec: Flags-Byte, dann HR (uint8 oder uint16 LE), optional
-    Energy Expended (uint16, übersprungen), dann 0..n RR-Werte (uint16 LE,
-    Einheit 1/1024 s).
+    Layout per BLE spec: flags byte, then HR (uint8 or uint16 LE), optional
+    Energy Expended (uint16, skipped), then 0..n RR values (uint16 LE, unit
+    1/1024 s).
     """
     if not data:
         return 0, []
@@ -69,7 +68,7 @@ class H10Source:
         transport: Optional[BleTransport] = None,
     ) -> None:
         self._device = device
-        # Transport injizierbar -> hardwarelos testbar; Standard = Bleak.
+        # Transport injectable -> testable without hardware; default = Bleak.
         if transport is None:
             from ..hal.ble_bleak import BleakTransport
 
@@ -80,7 +79,7 @@ class H10Source:
         await self._transport.connect(self._device)
 
         def on_notify(payload: bytes) -> None:
-            # Läuft im BLE-Callback; Zeitstempel = Ankunftszeit, emit ist nicht-blockierend.
+            # Runs in the BLE callback; timestamp = arrival time, emit is non-blocking.
             hr, rr_list = parse_hr_measurement(payload)
             mono, utc = clock.now()
             emit(HrSample(mono_ns=mono, utc=utc, hr_bpm=hr))
@@ -89,8 +88,8 @@ class H10Source:
 
         await self._transport.subscribe(HR_MEASUREMENT_UUID, on_notify)
         try:
-            # Läuft bis zum Task-Cancel durch die Runtime.
-            # (Auto-Reconnect bei Dropout ist Härtung, EW-39 - Seam hier.)
+            # Runs until the runtime cancels the task.
+            # (Auto-reconnect on dropout is hardening, EW-39 - seam here.)
             while True:
                 await asyncio.sleep(3600)
         finally:

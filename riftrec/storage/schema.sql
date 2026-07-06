@@ -1,19 +1,19 @@
--- Kanonisches RiftRec-Session-Schema.
--- Dies IST der Vertrag zwischen RiftRec (Recorder) und RiftLab (Auswertung):
--- RiftLab liest genau diese Tabellen. Änderungen hier => SCHEMA_VERSION erhöhen.
+-- Canonical RiftRec session schema.
+-- This IS the contract between RiftRec (recorder) and RiftLab (analysis):
+-- RiftLab reads exactly these tables. Changes here => bump SCHEMA_VERSION.
 --
--- Zeitachsen pro Sample: mono_ns (perf_counter_ns, präzise Ordnung) + utc
--- (ISO-8601, streamübergreifende Ausrichtung). session.mono_anchor_ns +
--- session.started_utc bilden mono_ns -> utc ab. Riot-Zeilen tragen zusätzlich
--- game_time_s (In-Game-Uhr).
+-- Time axes per sample: mono_ns (perf_counter_ns, precise ordering) + utc
+-- (ISO-8601, cross-stream alignment). session.mono_anchor_ns +
+-- session.started_utc map mono_ns -> utc. Riot rows also carry game_time_s
+-- (in-game clock).
 
 CREATE TABLE IF NOT EXISTS session (
     session_id     TEXT    PRIMARY KEY,
-    participant_id TEXT,                 -- pseudonym; im Demo NULL, in der Härtung Pflicht (EW-41)
-    session_index  INTEGER,              -- fortlaufende Session-Nr. je Teilnehmer (EW-41)
+    participant_id TEXT,                 -- pseudonymous; NULL in the demo, mandatory in the pilot (EW-41)
+    session_index  INTEGER,              -- consecutive session no. per participant (EW-41)
     started_utc    TEXT    NOT NULL,      -- ISO-8601 UTC
-    ended_utc      TEXT,                 -- NULL bis close_session
-    mono_anchor_ns INTEGER NOT NULL,     -- perf_counter_ns bei started_utc
+    ended_utc      TEXT,                 -- NULL until close_session
+    mono_anchor_ns INTEGER NOT NULL,     -- perf_counter_ns at started_utc
     app_version    TEXT    NOT NULL,
     schema_version INTEGER NOT NULL,
     notes          TEXT
@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS game_event (
     mono_ns      INTEGER NOT NULL,
     utc          TEXT    NOT NULL,
     game_time_s  REAL,
-    event_id     INTEGER,               -- Riot EventID, zur Deduplizierung
+    event_id     INTEGER,               -- Riot EventID, for deduplication
     event_type   TEXT    NOT NULL,      -- ChampionKill, TurretKilled, DragonKill, ...
     payload_json TEXT
 );

@@ -1,8 +1,8 @@
-"""Beobachtbarer Zustand des Recorders.
+"""Observable recorder state.
 
-Die Zustandsfolge trennt "verbunden & bereit" von "nimmt aktiv auf" — genau
-die Unterscheidung, die das spätere Tray-Icon (EW-38) anzeigen soll. Der
-Kern hält die Front-End-freie Wahrheit; eine UI hängt sich per Callback dran.
+The state sequence separates "connected & ready" from "actively recording" -
+exactly the distinction the later tray icon (EW-38) should show. The core holds
+the front-end-free truth; a UI attaches via a callback.
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ from typing import Callable
 class RecorderState(enum.Enum):
     IDLE = "idle"
     CONNECTING = "connecting"
-    READY = "ready"          # Quellen verbunden, wartet auf Match-Start
-    RECORDING = "recording"  # Match erkannt, schreibt Daten
+    READY = "ready"          # sources connected, waiting for match start
+    RECORDING = "recording"  # match detected, writing data
     STOPPED = "stopped"
     ERROR = "error"
 
@@ -24,7 +24,7 @@ StateListener = Callable[[RecorderState], None]
 
 
 class Observable:
-    """Minimaler Zustandshalter mit Listener-Benachrichtigung."""
+    """Minimal state holder with listener notification."""
 
     def __init__(self, initial: RecorderState = RecorderState.IDLE) -> None:
         self._state = initial

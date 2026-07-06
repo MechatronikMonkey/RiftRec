@@ -1,68 +1,68 @@
 # RiftRec
 
-PC-Recorder für Esports-Performance-Sessions: liest Live-Herzfrequenz/RR/EKG/ACC vom **Polar H10** (BLE) und In-Game-Events aus der **Riot Live Client Data API** (`localhost:2999`) aus.
+PC recorder for esports-performance sessions: reads live heart rate / RR / ECG / ACC from the **Polar H10** (BLE) and in-game events from the **Riot Live Client Data API** (`localhost:2999`).
 
-## Architektur
+## Architecture
 
-Geschichtet, damit die H10-Datenquelle austauschbar bleibt (späterer Wechsel auf einen USB-Dongle) und beide Streams zeitsynchron in *einer* Session landen:
+Layered so the H10 data source stays swappable (later switch to a USB dongle) and both streams land time-synchronised in *one* session:
 
 ```
-CLI  (später Tray+Settings, EW-38)          dünnes Front-End
+CLI  (later tray+settings, EW-38)           thin front-end
         │
-   RTE  │  RecorderRuntime + SessionClock    Lifecycle, gemeinsame asyncio.Queue,
-        │  (verdrahtet Quellen → Queue → Sink)  Session-Grenzen, Zustandsmaschine
+   RTE  │  RecorderRuntime + SessionClock    lifecycle, shared asyncio.Queue,
+        │  (wires sources → queue → sink)     session bounds, state machine
         ▼
-  SignalSource (Protocol)            SessionSink (Protocol)
-   ├─ FakeSource  (synthetisch, für HW-lose Tests)   └─ SqliteSink (WAL) = Vertrag zu RiftLab
-   ├─ H10Source   (Polar HR/RR-Parsing 0x2A37)
-   │     └─ HAL: BleTransport → BleakTransport   ← Naht für Dongle-Wechsel (nrf52840+Bumble)
-   └─ RiotSource  (HTTP-Poll, Game-Start/-Ende, Event-Dedup, Snapshots)
+  SignalSource (protocol)            SessionSink (protocol)
+   ├─ FakeSource  (synthetic, for HW-free tests)    └─ SqliteSink (WAL) = contract to RiftLab
+   ├─ H10Source   (Polar HR/RR parsing 0x2A37)
+   │     └─ HAL: BleTransport → BleakTransport   ← seam for the dongle switch (nrf52840+Bumble)
+   └─ RiotSource  (HTTP poll, game start/end, event dedup, snapshots)
 ```
 
-Kernidee: alle Quellen stempeln Records auf **einer** `SessionClock` (`mono_ns` präzise + `utc`
-als Anker) und schreiben unter **einer** `session_id` in dieselbe SQLite-DB. Der „Merge“ der
-Streams ist damit ein Join zur Auswertungszeit — kein eigener Schritt. Die HAL-Grenze ist der
-*BLE-Transport* (scan/connect/notify/write), nicht die Polar-Semantik; ein Dongle tauscht nur
-den Host-BLE-Stack, nicht das Polar-GATT-Protokoll.
+Core idea: all sources timestamp records on **one** `SessionClock` (`mono_ns` precise + `utc`
+anchor) and write under **one** `session_id` into the same SQLite DB. The "merge" of the streams
+is therefore a join at analysis time — not a separate step. The HAL boundary is the *BLE
+transport* (scan/connect/notify/write), not the Polar semantics; a dongle swaps only the host
+BLE stack, not the Polar GATT protocol.
 
-Paket: `riftrec/` — `rte/` (Runtime+State), `sources/` (fake/h10/riot + `base`), `hal/`
-(`ble` Protocol + `ble_bleak`), `storage/` (`sqlite_sink` + `schema.sql`), `clock`, `model`,
+Package: `riftrec/` — `rte/` (runtime+state), `sources/` (fake/h10/riot + `base`), `hal/`
+(`ble` protocol + `ble_bleak`), `storage/` (`sqlite_sink` + `schema.sql`), `clock`, `model`,
 `config`, `cli`.
 
-## Nutzung
+## Usage
 
 ```
 pip install -r requirements.txt
 
-# Hardware-los: synthetische Pipe (erzeugt eine gültige Session-DB)
+# Hardware-free: synthetic pipe (produces a valid session DB)
 python -m riftrec record --source fake --seconds 5 --db demo.sqlite
 
-# Echt: H10 + laufendes LoL-Match, bis Match-Ende (Riot-Quelle stoppt die Session)
+# Real: H10 + running LoL match, until match end (the Riot source stops the session)
 python -m riftrec record --participant P01 --session 3 --source h10,riot --db P01_s3.sqlite
 ```
 
-Tests (ohne H10, ohne Match): `PYTHONPATH=. python tests/test_pipe.py` (analog `test_h10.py`,
-`test_riot.py`, `test_session_merge.py`), oder `PYTHONPATH=. python -m pytest tests/`.
+Tests (no H10, no match): `PYTHONPATH=. python tests/test_pipe.py` (likewise `test_h10.py`,
+`test_riot.py`, `test_session_merge.py`), or `PYTHONPATH=. python -m pytest tests/`.
 
-## Datenschema (SQLite = Vertrag zu RiftLab)
+## Data schema (SQLite = contract to RiftLab)
 
-`riftrec/storage/schema.sql` ist maßgeblich. Tabellen: `session` (Kopf + `mono_anchor_ns`/
-`started_utc` als mono→UTC-Anker), `hr_sample`, `rr_interval` (eigene Tabelle, tragendes
-HRV-Signal), `game_event` (dedupliziert per Riot-`EventID`), `game_snapshot` (KDA/CS/Gold-
-Verlauf), `gap` (Dropout-Marker, EW-39). Schema-Version in `riftrec/__init__.py:SCHEMA_VERSION`.
+`riftrec/storage/schema.sql` is authoritative. Tables: `session` (header + `mono_anchor_ns`/
+`started_utc` as the mono→UTC anchor), `hr_sample`, `rr_interval` (own table, the load-bearing
+HRV signal), `game_event` (deduplicated by Riot `EventID`), `game_snapshot` (KDA/CS/gold trend),
+`gap` (dropout marker, EW-39). Schema version in `riftrec/__init__.py:SCHEMA_VERSION`.
 
-## Stand (2026-07-06)
+## Status (2026-07-06)
 
-**End-to-End gegen echte Hardware validiert (M0–M5, EW-26/EW-37 erfüllt).** Recorder-Kern
-(Skelett+SQLite-Vertrag, H10Source/0x2A37-Parser, RiotSource mit Poll/Dedup/Snapshot/Game-Ende,
-zwei Quellen → eine Session) plus RiftLab-Viewer (EW-31/36). Realer Lauf: getragener Polar H10
-(HR/RR über volle 180 s) + laufendes LoL-Practice-Tool über `--source h10,riot` — Live-Events
-(10× ChampionKill/FirstBlood/Multikill, korrekt dedupliziert), Snapshots mit korrektem
-Spieler-Matching (riotId), Zeitsync H10↔Riot, Chart aus dem SQLite-Vertrag: HR-Spitze fällt
-mit dem Kill-Cluster zusammen, HRV (RMSSD) gegenläufig.
+**Validated end-to-end against real hardware (M0–M5, EW-26/EW-37 met).** Recorder core
+(skeleton+SQLite contract, H10Source/0x2A37 parser, RiotSource with poll/dedup/snapshot/game-end,
+two sources → one session) plus the RiftLab viewer (EW-31/36). Real run: worn Polar H10
+(HR/RR over the full 180 s) + running LoL Practice Tool via `--source h10,riot` — live events
+(10× ChampionKill/FirstBlood/Multikill, correctly deduplicated), snapshots with correct
+player matching (riotId), time-sync H10↔Riot, chart from the SQLite contract: the HR spike
+coincides with the kill cluster, HRV (RMSSD) inversely.
 
-**Offen:** Pilot-Härtung — Tray/Settings-UI (EW-38), Auto-Reconnect + `gap`-Logging bei
-BLE-Dropout (EW-39), Pflicht-Metadaten participant/session (EW-41), Self-Report NASA-TLX/PANAS.
+**Open:** pilot hardening — tray/settings UI (EW-38), auto-reconnect + `gap` logging on BLE
+dropout (EW-39), mandatory participant/session metadata (EW-41), self-report NASA-TLX/PANAS.
 
 ## Setup
 
@@ -70,40 +70,42 @@ BLE-Dropout (EW-39), Pflicht-Metadaten participant/session (EW-41), Self-Report 
 pip install -r requirements.txt
 ```
 
-## Polar H10 verbinden (Windows)
+## Connecting the Polar H10 (Windows)
 
-Der Standard-Heart-Rate-Service (HR/RR) braucht kein Pairing und funktioniert sofort. Für **rohes EKG + Beschleunigung** (PMD-Protokoll, genutzt von `bleakheart.PolarMeasurementData`) verlangt der H10 eine authentifizierte/gebondete BLE-Verbindung. Auf Windows 11 funktioniert das reaktive Pairing (der Dialog, der automatisch aufpoppt, wenn ein Skript zum ersten Mal auf PMD zugreift) nicht zuverlässig — bekanntes offenes Problem: [bleak#1943](https://github.com/hbldh/bleak/issues/1943).
+The standard Heart Rate service (HR/RR) needs no pairing and works immediately. For **raw ECG + acceleration** (PMD protocol, used by `bleakheart.PolarMeasurementData`) the H10 requires an authenticated/bonded BLE connection. On Windows 11 reactive pairing (the dialog that pops up automatically when a script first accesses PMD) does not work reliably — known open issue: [bleak#1943](https://github.com/hbldh/bleak/issues/1943).
 
-**Funktionierender Weg — Gerät proaktiv über die Windows-Einstellungen koppeln, bevor ein Skript läuft:**
+**What works — pair the device proactively via Windows Settings before running a script:**
 
-1. Windows-Einstellungen → **Bluetooth & Geräte**
-2. **Gerät hinzufügen** → Bluetooth
-3. Falls der H10 nicht in der Kurzliste auftaucht: unten auf **"Alle Geräte anzeigen"** klicken (ungefilterte Liste)
-4. **"Polar H10 <Seriennummer>"** anklicken → **Koppeln**
-5. Erfolgsmeldung "Ihr Gerät ist einsatzbereit" abwarten (Gerät zeigt danach "Nicht verbunden" — das ist normal, `bleak` verbindet sich bei Skriptstart selbst)
-6. Erst danach das Recorder-/Test-Skript starten
+1. Windows Settings → **Bluetooth & devices**
+2. **Add device** → Bluetooth
+3. If the H10 does not appear in the short list: click **"Show all devices"** at the bottom (unfiltered list)
+4. Click **"Polar H10 <serial>"** → **Pair**
+5. Wait for the success message "Your device is ready to go" (the device then shows "Not connected" — that is normal, `bleak` connects itself on script start)
+6. Only then start the recorder/test script
 
-Voraussetzung für jede HR/RR-Messung: Elektroden am Gurt müssen **angefeuchtet** sein und der Gurt muss **am Körper getragen** werden — trocken auf dem Tisch liegend sendet der H10 keine verwertbaren Werte.
+Prerequisite for any HR/RR measurement: the strap electrodes must be **moistened** and the strap must be **worn on the body** — lying dry on the desk the H10 sends no usable values.
 
-### Bekanntes, ungelöstes Problem: EKG/ACC (PMD) nur beim ersten Connect
+### Known, unresolved issue: ECG/ACC (PMD) only on the first connect
 
-Reproduzierbar getestet (2026-07-05): rohes EKG + Beschleunigung (PMD-Protokoll) kommen nur bei der **allerersten** BLE-Verbindung nach einem frischen Windows-Pairing an. Jeder weitere Reconnect zum selben gekoppelten Gerät liefert `SUCCESS` auf die Control-Point-Befehle (`available_settings`, `start_streaming`), aber **keine einzige Daten-Notification** mehr — weder HR (das bleibt immer zuverlässig) noch neu koppeln hilft dabei.
+Reproducibly tested (2026-07-05): raw ECG + acceleration (PMD protocol) arrive only on the **very first** BLE connection after a fresh Windows pairing. Every further reconnect to the same paired device returns `SUCCESS` on the control-point commands (`available_settings`, `start_streaming`) but **not a single data notification** anymore — while HR always stays reliable, and re-pairing does not help either.
 
-Durchprobiert und **bestätigt wirkungslos**:
-- physischer H10-Reset (Gurt 60s vom Körper)
+Tried and **confirmed ineffective**:
+- physical H10 reset (strap off skin for 60 s)
 - `BleakClient(device, winrt=dict(use_cached_services=False))`
-- Pausen zwischen den drei Notify-Anmeldungen (HR/ECG/ACC)
-- kompletter PC-Neustart
-- explizites `client.pair()` im Skript
+- pauses between the three notify subscriptions (HR/ECG/ACC)
+- a full PC reboot
+- an explicit `client.pair()` in the script
 
-Vermutete Ursache: Windows baut die für den authentifizierten PMD-Kanal nötige Verschlüsselung offenbar nur beim ersten Connect nach dem Pairing sauber auf; Reconnects zum bereits gebondeten Gerät bekommen zwar Schreibzugriff (Control-Point), aber keine Push-Notifications mehr. Kein bekannter Fix in der Community (siehe [bleak#1943](https://github.com/hbldh/bleak/issues/1943), [bleakheart#5](https://github.com/fsmeraldi/bleakheart/issues/5)).
+Suspected cause: Windows apparently only sets up the encryption needed for the authenticated PMD channel cleanly on the first connect after pairing; reconnects to the already-bonded device do get write access (control point) but no push notifications anymore. No known fix in the community (see [bleak#1943](https://github.com/hbldh/bleak/issues/1943), [bleakheart#5](https://github.com/fsmeraldi/bleakheart/issues/5)).
 
-**Konsequenz für RiftRec:** HR/RR (Standard-Service) ist die verlässliche Basis und deckt die MVP-Anforderung (EW-26: "Herzfrequenz steigt im Teamfight"). EKG/ACC via PMD gilt auf Windows aktuell als nicht praxistauglich und ist zurückgestellt — ggf. später erneut prüfen (anderer Bluetooth-Adapter, Linux, oder falls bleak/Windows das upstream fixen).
+**Consequence for RiftRec:** HR/RR (standard service) is the reliable basis and covers the MVP requirement (EW-26: "heart rate rises in a teamfight"). ECG/ACC via PMD is currently considered not practical on Windows and is deferred — possibly re-check later (different Bluetooth adapter, Linux, or if bleak/Windows fix it upstream).
 
-## Ordnerstruktur
+## Folder structure
 
-- `riftrec/` — das Recorder-Paket (siehe Architektur oben)
-- `tests/` — hardware-/spielfreie Tests (Parser, Quellen via Fakes, End-to-End-Pipe)
-- `spikes/` — kurze technische Vorabklärungen/Machbarkeitschecks (kein Dauerbetrieb, keine formale Testsuite)
-  - `h10_ble_scan.py` — reiner BLE-Discovery-Test, ob der H10 gefunden wird
-  - `h10_ping.py` — verbindet sich, holt je 3 Frames HR/RR + EKG + ACC, misst Timing (min/avg/max Inter-Arrival), analog zu `ping`
+- `riftrec/` — the recorder package (see Architecture above)
+- `tests/` — hardware-/match-free tests (parser, sources via fakes, end-to-end pipe)
+- `spikes/` — short technical feasibility checks (not for continuous operation, no formal test suite)
+  - `h10_ble_scan.py` — pure BLE discovery test: is the H10 found?
+  - `h10_ping.py` — connects, pulls 3 frames each of HR/RR + ECG + ACC, measures timing (min/avg/max inter-arrival), like `ping`
+  - `h10_simpleble_probe.py` — confirmation test with SimpleBLE (cross-check of the PMD bug)
+  - `h10_bumble_probe.py` — talk to the H10 through Google's Bumble user-space BLE stack (WinRT bypass; needs a USB dongle)

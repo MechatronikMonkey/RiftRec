@@ -1,9 +1,9 @@
-"""Milestone-3-Test: zwei Quellen -> eine joinbare Session, Riot-Ende stoppt.
+"""Milestone-3 test: two sources -> one joinable session, Riot end stops it.
 
-Beweist ohne Hardware/Match, dass HR-Strom (FakeSource) und Game-Events
-(RiotSource via injiziertem Fetch) unter einer session_id auf einer Uhr in
-derselben DB landen (der "Merge" = Join), und dass das GameEnd der Riot-Quelle
-die Session beendet, obwohl die HR-Quelle endlos weiterläuft.
+Proves without hardware/match that the HR stream (FakeSource) and game events
+(RiotSource via injected fetch) land under one session_id on one clock in the
+same DB (the "merge" = join), and that the RiotSource's GameEnd ends the session
+even though the HR source keeps running forever.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ def test_two_sources_one_session() -> None:
         sink = SqliteSink(db_path)
         runtime = RecorderRuntime(
             [
-                # HR-Quelle läuft "endlos" (viele schnelle Ticks); soll NICHT das Ende bestimmen
+                # HR source runs "forever" (many fast ticks); must NOT decide the end
                 FakeSource(ticks=10_000, tick_s=0.002),
                 RiotSource(poll_interval_s=0.0, snapshot_interval_s=0.0,
                            fetch=_scripted_fetch([frame1, frame2])),
@@ -62,18 +62,18 @@ def test_two_sources_one_session() -> None:
             event_types = [r[0] for r in conn.execute(
                 "SELECT event_type FROM game_event ORDER BY event_id").fetchall()]
             (snap_count,) = conn.execute("SELECT COUNT(*) FROM game_snapshot").fetchone()
-            assert hr_count > 0, "keine HR-Samples trotz laufender HR-Quelle"
+            assert hr_count > 0, "no HR samples despite a running HR source"
             assert event_types == ["ChampionKill", "GameEnd"]
             assert snap_count == 2
 
-            # Der Merge: HR und Events teilen sich dieselbe session_id
+            # The merge: HR and events share the same session_id
             (hr_sid,) = conn.execute(
                 "SELECT DISTINCT session_id FROM hr_sample").fetchone()
             (ev_sid,) = conn.execute(
                 "SELECT DISTINCT session_id FROM game_event").fetchone()
             assert hr_sid == ev_sid == session_id
 
-            # Session sauber geschlossen (Riot-Ende hat gestoppt, HR wurde gecancelt)
+            # Session cleanly closed (Riot end stopped it, HR was cancelled)
             (ended,) = conn.execute(
                 "SELECT ended_utc FROM session WHERE session_id=?", (session_id,)).fetchone()
             assert ended is not None
@@ -83,4 +83,4 @@ def test_two_sources_one_session() -> None:
 
 if __name__ == "__main__":
     test_two_sources_one_session()
-    print("OK - Merge-Test bestanden (zwei Quellen, eine Session)")
+    print("OK - merge test passed (two sources, one session)")

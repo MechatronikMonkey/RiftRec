@@ -1,14 +1,14 @@
-"""RecorderRuntime - die Orchestrierung einer Aufnahme-Session.
+"""RecorderRuntime - orchestration of one recording session.
 
-Verantwortlich für den Lebenszyklus: Session-Uhr und -Kopf anlegen, alle
-Quellen als async Tasks starten, ihre Records über eine gemeinsame Queue in
-den Sink schreiben, und am Ende sauber abschließen. Weil alle Quellen unter
-einer session_id auf einer Uhr in denselben Sink schreiben, entsteht der
-"Merge" der Streams als Join zur Auswertungszeit — ohne eigenen Schritt.
+Owns the lifecycle: create the session clock and header, start every source as
+an async task, write their records through a shared queue into the sink, and
+close cleanly at the end. Because all sources write under one session_id on one
+clock into the same sink, the "merge" of the streams is a join at analysis time
+- with no separate step.
 
-Stop-Bedingungen: optionale Laufzeit (`duration_s`), alle Quellen natürlich
-beendet, oder Abbruch (Ctrl+C / Task-Cancel). In jedem Fall wird der Rest der
-Queue geleert und die Session geschlossen.
+Stop conditions: optional runtime (`duration_s`), all sources finishing
+naturally, or cancellation (Ctrl+C / task cancel). In every case the rest of the
+queue is drained and the session is closed.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ class RecorderRuntime:
         self.session_id: Optional[str] = None
 
     async def run(self) -> str:
-        """Führt eine Session end-to-end aus und gibt ihre session_id zurück."""
+        """Run one session end-to-end and return its session_id."""
         clock = SessionClock()
         self.session_id = str(uuid.uuid4())
         meta = SessionMeta(
@@ -68,8 +68,8 @@ class RecorderRuntime:
 
         queue: asyncio.Queue[Record] = asyncio.Queue()
         stop = asyncio.Event()
-        # RECORDING sobald geschrieben wird; die Trennung READY->RECORDING per
-        # Match-Erkennung folgt mit der RiotSource (EW-38).
+        # RECORDING as soon as we write; the READY->RECORDING split via match
+        # detection follows with the RiotSource (EW-38).
         self.status.set(RecorderState.RECORDING)
 
         source_tasks = [
@@ -86,7 +86,7 @@ class RecorderRuntime:
             results = await asyncio.gather(*source_tasks, return_exceptions=True)
             for task, res in zip(source_tasks, results):
                 if isinstance(res, BaseException) and not isinstance(res, asyncio.CancelledError):
-                    print(f"[warn] Quelle {task.get_name()} endete mit Fehler: {res!r}")
+                    print(f"[warn] source {task.get_name()} ended with error: {res!r}")
             stop.set()
             await writer_task
             ended_utc = datetime.now(timezone.utc).isoformat()
@@ -95,10 +95,10 @@ class RecorderRuntime:
         return self.session_id
 
     async def _supervise(self, source_tasks: list[asyncio.Task]) -> None:
-        """Wartet, bis die ERSTE Quelle endet oder die Laufzeit abläuft.
+        """Wait until the FIRST source ends or the runtime elapses.
 
-        "Erste Quelle" statt "alle": endet die Riot-Quelle (Match vorbei),
-        soll die Session enden, auch wenn der H10 endlos weiterstreamt.
+        "First source" instead of "all": when the Riot source ends (match over)
+        the session should end, even if the H10 keeps streaming forever.
         """
         waiters: list[asyncio.Task] = list(source_tasks)
         duration_task: asyncio.Task | None = None
@@ -112,7 +112,7 @@ class RecorderRuntime:
             duration_task.cancel()
 
     async def _writer(self, queue: asyncio.Queue[Record], stop: asyncio.Event) -> None:
-        """Draint die Queue in den Sink und flusht periodisch."""
+        """Drain the queue into the sink and flush periodically."""
         last_flush = time.monotonic()
         while True:
             try:

@@ -1,4 +1,4 @@
-"""Milestone-2-Tests ohne laufendes Match: RiotSource via injiziertem Fetch."""
+"""Milestone-2 tests without a running match: RiotSource via injected fetch."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def test_extract_snapshot_matches_active_player() -> None:
 
 
 def _scripted_fetch(frames: list):
-    """frames: Liste von dicts oder None; nach Erschöpfung immer None."""
+    """frames: list of dicts or None; after exhaustion always None."""
     it = iter(frames)
 
     async def fetch():
@@ -56,7 +56,7 @@ def test_riotsource_emits_events_and_snapshot_then_ends() -> None:
                         "scores": {"kills": 1, "deaths": 0, "assists": 0, "creepScore": 40}}],
         "events": {"Events": [{"EventID": 0, "EventName": "GameStart", "EventTime": 0.0}, kill]},
     }
-    # Zweiter Frame: gleiche Events (dürfen nicht doppelt kommen) + GameEnd -> Quelle endet
+    # Second frame: same events (must not be emitted twice) + GameEnd -> source ends
     frame2 = {
         "gameData": {"gameTime": 66.0},
         "activePlayer": {"summonerName": "Faker", "currentGold": 950.0, "level": 5},
@@ -73,16 +73,16 @@ def test_riotsource_emits_events_and_snapshot_then_ends() -> None:
 
     events = [r for r in emitted if isinstance(r, GameEvent)]
     snaps = [r for r in emitted if isinstance(r, GameSnapshot)]
-    # GameStart, ChampionKill, GameEnd - jeweils genau einmal (Dedup über Polls)
+    # GameStart, ChampionKill, GameEnd - each exactly once (dedup across polls)
     assert [e.event_type for e in events] == ["GameStart", "ChampionKill", "GameEnd"]
     assert [e.event_id for e in events] == [0, 1, 2]
-    # snapshot_interval_s=0 -> je Frame ein Snapshot
+    # snapshot_interval_s=0 -> one snapshot per frame
     assert len(snaps) == 2
     assert snaps[0].kills == 1
 
 
 def test_riotsource_waits_when_no_match_then_ends_when_gone() -> None:
-    # Erst kein Match (None), dann ein Frame, dann weg -> sauberes Ende
+    # First no match (None), then a frame, then gone -> clean end
     frame = {"gameData": {"gameTime": 1.0}, "activePlayer": {}, "allPlayers": [],
              "events": {"Events": [{"EventID": 0, "EventName": "GameStart", "EventTime": 0.0}]}}
     source = RiotSource(poll_interval_s=0.0, snapshot_interval_s=999,
@@ -97,4 +97,4 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(fn):
             fn()
             print(f"OK - {name}")
-    print("OK - alle Riot-Tests bestanden")
+    print("OK - all Riot tests passed")

@@ -1,10 +1,10 @@
-"""Datenmodell: die Records, die durch die Runtime-Queue in den Sink fließen.
+"""Data model: the records that flow through the runtime queue into the sink.
 
-Jeder Sample-Record trägt zwei Zeitstempel: `mono_ns` (perf_counter_ns, für
-präzise Ordnung/Inter-Arrival innerhalb einer Session) und `utc` (ISO-8601,
-für die streamübergreifende Ausrichtung). Beide werden von der `SessionClock`
-bei Ankunft der Daten gesetzt. Riot-Records tragen zusätzlich `game_time_s`
-(In-Game-Uhr) als dritte, gegen Reconnects robuste Zeitachse.
+Every sample record carries two timestamps: `mono_ns` (perf_counter_ns, for
+precise ordering / inter-arrival within a session) and `utc` (ISO-8601, for
+cross-stream alignment). Both are set by the `SessionClock` when the data
+arrives. Riot records additionally carry `game_time_s` (in-game clock) as a
+third time axis that is robust against reconnects.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from typing import Optional, Union
 
 @dataclass(slots=True)
 class HrSample:
-    """Ein Herzfrequenz-Wert (bpm) aus einer HR-Measurement-Notification."""
+    """A heart-rate value (bpm) from an HR measurement notification."""
 
     mono_ns: int
     utc: str
@@ -24,11 +24,10 @@ class HrSample:
 
 @dataclass(slots=True)
 class RrInterval:
-    """Ein RR-Intervall (ms) — das tragende Signal für die HRV-Auswertung.
+    """An RR interval (ms) - the load-bearing signal for HRV analysis.
 
-    Eine einzelne HR-Notification kann 0..n RR-Intervalle enthalten; jedes wird
-    zu einem eigenen Record, damit RiftLab die Schlag-zu-Schlag-Reihe lückenlos
-    rekonstruieren kann.
+    A single HR notification can carry 0..n RR intervals; each becomes its own
+    record so RiftLab can reconstruct the beat-to-beat series without gaps.
     """
 
     mono_ns: int
@@ -38,12 +37,11 @@ class RrInterval:
 
 @dataclass(slots=True)
 class GameEvent:
-    """Ein diskretes In-Game-Event aus der Riot Live Client Data API.
+    """A discrete in-game event from the Riot Live Client Data API.
 
-    `event_id` ist die Riot-`EventID` (monoton je Match) und dient der
-    Deduplizierung über aufeinanderfolgende Polls. `payload_json` hält das
-    rohe Event-Objekt, damit später weitere Felder ausgewertet werden können,
-    ohne den Recorder zu ändern.
+    `event_id` is the Riot `EventID` (monotonic per match) and is used for
+    deduplication across successive polls. `payload_json` holds the raw event
+    object so more fields can be analysed later without changing the recorder.
     """
 
     mono_ns: int
@@ -56,10 +54,10 @@ class GameEvent:
 
 @dataclass(slots=True)
 class GameSnapshot:
-    """Periodischer Scoreboard-Schnappschuss des aktiven Spielers.
+    """A periodic scoreboard snapshot of the active player.
 
-    Liefert Verlaufsgrößen (KDA/CS/Gold/Level) für Game-Phasen-Analysen, die
-    aus den diskreten Events allein nicht ablesbar sind.
+    Provides trend quantities (KDA/CS/gold/level) for game-phase analyses that
+    the discrete events alone cannot express.
     """
 
     mono_ns: int
@@ -75,10 +73,10 @@ class GameSnapshot:
 
 @dataclass(slots=True)
 class Gap:
-    """Marker für eine Verbindungslücke einer Quelle (EW-39).
+    """Marker for a connection gap of a source (EW-39).
 
-    Damit unterscheidet RiftLab "Daten fehlen" von "Signal war flach".
-    `end_utc` bleibt offen, bis die Quelle wieder verbunden ist.
+    Lets RiftLab tell "data missing" apart from "signal was flat". `end_utc`
+    stays open until the source is reconnected.
     """
 
     source: str
@@ -86,16 +84,16 @@ class Gap:
     end_utc: Optional[str] = None
 
 
-# Alles, was eine Quelle über `emit` in die Queue legen darf.
+# Everything a source may put onto the queue via `emit`.
 Record = Union[HrSample, RrInterval, GameEvent, GameSnapshot]
 
 
 @dataclass(slots=True)
 class SessionMeta:
-    """Kopfdaten einer Aufnahme-Session (eine Zeile in `session`).
+    """Header data of a recording session (one row in `session`).
 
-    `mono_anchor_ns` + `started_utc` bilden den Anker, mit dem jeder `mono_ns`
-    eines Records auf UTC abgebildet werden kann.
+    `mono_anchor_ns` + `started_utc` form the anchor that maps every `mono_ns`
+    of a record onto UTC.
     """
 
     session_id: str

@@ -1,4 +1,4 @@
-"""Storage-Schicht: der SessionSink-Vertrag und seine SQLite-Umsetzung."""
+"""Storage layer: the SessionSink contract and its SQLite implementation."""
 
 from .base import SessionSink
 from .sqlite_sink import SqliteSink

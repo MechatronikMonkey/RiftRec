@@ -1,8 +1,8 @@
-"""SessionSink-Protocol: das Ziel, in das die Runtime Records schreibt.
+"""SessionSink protocol: the target the runtime writes records into.
 
-Bewusst schmal gehalten, damit neben SQLite später andere Senken (z. B. ein
-direkter Supabase/Postgres-Writer) ohne Änderung an Runtime oder Quellen
-angebunden werden können.
+Kept deliberately narrow so that, besides SQLite, other sinks (e.g. a direct
+Supabase/Postgres writer) can be plugged in later without changing the runtime
+or the sources.
 """
 
 from __future__ import annotations
@@ -14,21 +14,21 @@ from ..model import Gap, Record, SessionMeta
 
 class SessionSink(Protocol):
     def open_session(self, meta: SessionMeta) -> None:
-        """Session anlegen (Kopfzeile schreiben, Ziel vorbereiten)."""
+        """Create the session (write header row, prepare the target)."""
         ...
 
     def write(self, record: Record) -> None:
-        """Einen Record einreihen (darf puffern; siehe flush)."""
+        """Queue a record (may buffer; see flush)."""
         ...
 
     def flush(self) -> None:
-        """Gepufferte Records dauerhaft schreiben."""
+        """Persist buffered records durably."""
         ...
 
     def mark_gap(self, gap: Gap) -> None:
-        """Verbindungslücke einer Quelle festhalten (EW-39)."""
+        """Record a connection gap of a source (EW-39)."""
         ...
 
     def close_session(self, ended_utc: str) -> None:
-        """Session abschließen (Rest flushen, ended_utc setzen, schließen)."""
+        """Finish the session (flush the rest, set ended_utc, close)."""
         ...

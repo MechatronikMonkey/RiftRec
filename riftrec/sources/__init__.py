@@ -1,4 +1,4 @@
-"""Signal-Quellen: async Producer, die zeitgestempelte Records emittieren."""
+"""Signal sources: async producers that emit timestamped records."""
 
 from .base import EmitFn, SignalSource
 from .fake import FakeSource

@@ -9,11 +9,32 @@ file is the contract to RiftLab.
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ..model import Gap, GameEvent, GameSnapshot, HrSample, Record, RrInterval, SessionMeta
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
+
+
+def append_session_note(db_path: str | Path, session_id: str, text: str) -> None:
+    """Append a timestamped free-text note to a session's `notes` column.
+
+    Uses its own short-lived connection so it works both for the currently
+    recording session and for an already-closed one (EW-38 note feature).
+    """
+    stamp = datetime.now(timezone.utc).strftime("%H:%M:%SZ")
+    line = f"[{stamp}] {text}"
+    conn = sqlite3.connect(db_path, timeout=5.0)
+    try:
+        conn.execute(
+            "UPDATE session SET notes = CASE WHEN notes IS NULL OR notes = '' "
+            "THEN ? ELSE notes || char(10) || ? END WHERE session_id = ?",
+            (line, line, session_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 class SqliteSink:

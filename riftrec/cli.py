@@ -58,7 +58,7 @@ async def _run(config: RecorderConfig) -> None:
     print(f"Session {session_id} finished.")
 
 
-def _parse_args(argv: list[str] | None) -> RecorderConfig:
+def _parse_args(argv: list[str] | None) -> "RecorderConfig | str":
     parser = argparse.ArgumentParser(prog="riftrec", description="RiftRec recorder")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -77,7 +77,11 @@ def _parse_args(argv: list[str] | None) -> RecorderConfig:
     rec.add_argument("--poll-interval", dest="poll_interval_s", type=float, default=1.0)
     rec.add_argument("--snapshot-interval", dest="snapshot_interval_s", type=float, default=5.0)
 
+    sub.add_parser("gui", help="Launch the settings window + hands-off tray recorder (EW-38)")
+
     args = parser.parse_args(argv)
+    if args.command == "gui":
+        return "gui"
     return RecorderConfig(
         participant_id=args.participant_id,
         session_index=args.session_index,
@@ -93,6 +97,11 @@ def _parse_args(argv: list[str] | None) -> RecorderConfig:
 
 def main(argv: list[str] | None = None) -> None:
     config = _parse_args(argv)
+    if config == "gui":
+        from .app.runner import run_gui
+
+        run_gui()
+        return
     try:
         asyncio.run(_run(config))
     except KeyboardInterrupt:

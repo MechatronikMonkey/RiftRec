@@ -7,7 +7,7 @@ PC recorder for esports-performance sessions: reads live heart rate / RR / ECG /
 Layered so the H10 data source stays swappable (later switch to a USB dongle) and both streams land time-synchronised in *one* session:
 
 ```
-CLI  (later tray+settings, EW-38)           thin front-end
+CLI / tray+settings GUI (EW-38)             thin front-end
         │
    RTE  │  RecorderRuntime + SessionClock    lifecycle, shared asyncio.Queue,
         │  (wires sources → queue → sink)     session bounds, state machine
@@ -61,8 +61,19 @@ two sources → one session) plus the RiftLab viewer (EW-31/36). Real run: worn 
 player matching (riotId), time-sync H10↔Riot, chart from the SQLite contract: the HR spike
 coincides with the kill cluster, HRV (RMSSD) inversely.
 
-**Open:** pilot hardening — tray/settings UI (EW-38), auto-reconnect + `gap` logging on BLE
-dropout (EW-39), mandatory participant/session metadata (EW-41), self-report NASA-TLX/PANAS.
+**Hands-off supervisor + tray/settings GUI validated against real hardware (EW-38).**
+`python -m riftrec gui` shows a settings window once (participant id, start session #, H10
+device — scan or leave on auto-pick, storage file), then runs unattended: `SupervisorService`
+keeps the H10 connected and watches the Riot API continuously, opening/closing one session row
+per detected match (auto-incrementing `session_index`) in a single SQLite file; HR arriving
+between matches is discarded. A tray icon reflects state (grey idle, amber connecting, green
+ready, red recording, slate stopped, purple error) and offers "Add note…" (timestamped, appended
+to the current or last-closed session) and "Stop and exit". Real run: a full match recorded
+end-to-end unattended (736 HR samples, 894 RR intervals, 23 game events, 145 snapshots, clean
+session close).
+
+**Open:** auto-reconnect + `gap` logging on BLE dropout (EW-39), mandatory participant/session
+metadata (EW-41), self-report NASA-TLX/PANAS.
 
 ## Setup
 
@@ -84,6 +95,16 @@ The standard Heart Rate service (HR/RR) needs no pairing and works immediately. 
 6. Only then start the recorder/test script
 
 Prerequisite for any HR/RR measurement: the strap electrodes must be **moistened** and the strap must be **worn on the body** — lying dry on the desk the H10 sends no usable values.
+
+### Known gotcha: BLE scan from a Tkinter thread
+
+Calling `bleak.BleakScanner.discover()` on a thread that has already created a Tkinter window
+fails with `BleakError: Thread is configured for Windows GUI but callbacks are not working` —
+Windows flags any thread that has created a window as a "GUI thread", and bleak's WinRT backend
+can't deliver scan callbacks there. The same scan on a plain thread (no window ever created on
+it) works fine. Fix used in `app/settings_window.py`: run `scan_polar_devices()` on a background
+`threading.Thread` and marshal the result back via `root.after(...)`, never call it directly from
+a Tk callback.
 
 ### Known, unresolved issue: ECG/ACC (PMD) only on the first connect
 

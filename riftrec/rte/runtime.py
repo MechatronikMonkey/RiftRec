@@ -21,7 +21,7 @@ from typing import Optional, Sequence
 
 from .. import SCHEMA_VERSION, __version__
 from ..clock import SessionClock
-from ..model import Record, SessionMeta
+from ..model import GameEvent, GameSnapshot, HrSample, Record, RrInterval, SessionMeta
 from ..sources.base import SignalSource
 from ..storage.base import SessionSink
 from .state import Observable, RecorderState
@@ -68,9 +68,8 @@ class RecorderRuntime:
 
         queue: asyncio.Queue[Record] = asyncio.Queue()
         stop = asyncio.Event()
-        # RECORDING as soon as we write; the READY->RECORDING split via match
-        # detection follows with the RiotSource (EW-38).
-        self.status.set(RecorderState.RECORDING)
+        # State is advanced from the record stream (EW-38): first physio sample
+        # -> READY (connected), first Riot game record -> RECORDING (match live).
 
         source_tasks = [
             asyncio.create_task(src.run(queue.put_nowait, clock), name=src.name)
@@ -118,6 +117,7 @@ class RecorderRuntime:
             try:
                 record = await asyncio.wait_for(queue.get(), timeout=0.2)
                 self._sink.write(record)
+                self._advance_state(record)
             except asyncio.TimeoutError:
                 pass
             now = time.monotonic()
@@ -127,3 +127,18 @@ class RecorderRuntime:
             if stop.is_set() and queue.empty():
                 break
         self._sink.flush()
+
+    def _advance_state(self, record: Record) -> None:
+        """Drive READY/RECORDING from the record stream (EW-38).
+
+        Game data (from Riot) means the match is live -> RECORDING. Physio data
+        alone means we are connected and waiting -> READY. Only ever moves
+        forward (never downgrades RECORDING back to READY).
+        """
+        state = self.status.state
+        if isinstance(record, (GameEvent, GameSnapshot)):
+            if state is not RecorderState.RECORDING:
+                self.status.set(RecorderState.RECORDING)
+        elif isinstance(record, (HrSample, RrInterval)):
+            if state is RecorderState.CONNECTING:
+                self.status.set(RecorderState.READY)

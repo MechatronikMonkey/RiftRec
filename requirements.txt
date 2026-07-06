@@ -1,7 +1,10 @@
-# BLE-Zugriff auf den Polar H10 (Standard-HR-Service; PMD/ECG/ACC über bleakheart)
+# BLE access to the Polar H10 (standard HR service; PMD/ECG/ACC via bleakheart)
 bleak
 bleakheart
-# User-Space-BLE-Stack (WinRT-Bypass-Spike, spikes/h10_bumble_probe.py; braucht USB-Dongle)
+# User-space BLE stack (WinRT-bypass spike, spikes/h10_bumble_probe.py; needs a USB dongle)
 bumble
-# Async-HTTP-Client für den Riot-Live-Client-Data-Poller (sauberes verify=False)
+# Async HTTP client for the Riot Live Client Data poller (clean verify=False)
 httpx
+# Tray icon + settings-window front-end (EW-38)
+pystray
+pillow

@@ -25,7 +25,7 @@ from ..config import RecorderConfig
 from ..hal.ble import BleTransport
 from ..model import GameEvent, HrSample, RrInterval, SessionMeta
 from ..sources.h10 import HR_MEASUREMENT_UUID, parse_hr_measurement
-from ..sources.riot import DEFAULT_BASE_URL, extract_snapshot, new_events
+from ..sources.riot import DEFAULT_BASE_URL, active_riot_id, extract_snapshot, new_events
 from ..storage.sqlite_sink import SqliteSink, append_session_note
 from .state import Observable, RecorderState
 
@@ -41,6 +41,7 @@ class _Session:
         self.session_id = session_id
         self.last_event_id: Optional[int] = None
         self.last_snapshot_mono = 0
+        self.active_riot_id: Optional[str] = None
 
 
 class SupervisorService:
@@ -96,6 +97,11 @@ class SupervisorService:
         cur = self._current
         if cur is None:
             return
+        if cur.active_riot_id is None:
+            rid = active_riot_id(data)
+            if rid:
+                cur.active_riot_id = rid
+                cur.sink.set_active_riot_id(rid)
         mono, utc = cur.clock.now()
         events = (data.get("events") or {}).get("Events") or []
         for event in new_events(events, cur.last_event_id):

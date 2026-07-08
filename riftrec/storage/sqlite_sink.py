@@ -59,6 +59,11 @@ class SqliteSink:
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
+        # Additive migration: a `session` table created before active_riot_id
+        # existed (schema.sql's CREATE TABLE IF NOT EXISTS won't add it).
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(session)")}
+        if "active_riot_id" not in cols:
+            conn.execute("ALTER TABLE session ADD COLUMN active_riot_id TEXT")
         conn.execute(
             "INSERT INTO session (session_id, participant_id, session_index, "
             "started_utc, ended_utc, mono_anchor_ns, app_version, schema_version, notes) "
@@ -106,6 +111,20 @@ class SqliteSink:
             wrote = True
         if wrote:
             self._conn.commit()
+
+    def set_active_riot_id(self, riot_id: str) -> None:
+        """Record the recording player's Riot Name#TAG, once known (EW-41-adjacent).
+
+        Kept separate from the pseudonymous `participant_id`; used by RiftLab to
+        split kill/death/assist from enemy events instead of "Enemy kills" only.
+        """
+        if self._conn is None:
+            return
+        self._conn.execute(
+            "UPDATE session SET active_riot_id=? WHERE session_id=?",
+            (riot_id, self._session_id),
+        )
+        self._conn.commit()
 
     def mark_gap(self, gap: Gap) -> None:
         if self._conn is None:

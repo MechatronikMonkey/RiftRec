@@ -54,10 +54,16 @@ def test_two_matches_accumulate_in_one_file_with_notes() -> None:
         conn = sqlite3.connect(db)
         try:
             sessions = conn.execute(
-                "SELECT session_id, session_index, notes FROM session ORDER BY session_index"
+                "SELECT session_id, session_index, notes, active_riot_id FROM session "
+                "ORDER BY session_index"
             ).fetchall()
             assert [s[1] for s in sessions] == [1, 2]
             assert sessions[0][0] == sid1 and sessions[1][0] == sid2
+
+            # Match 1 saw a Riot poll -> active_riot_id captured; match 2 never
+            # received a Riot frame (only HR) -> stays unset.
+            assert sessions[0][3] == "P"
+            assert sessions[1][3] is None
 
             # HR: one per match; the between-match sample was discarded -> 2 total
             (hr_total,) = conn.execute("SELECT COUNT(*) FROM hr_sample").fetchone()

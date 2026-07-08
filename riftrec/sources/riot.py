@@ -53,6 +53,14 @@ def _find_active_row(data: dict) -> dict:
     return {}
 
 
+def active_riot_id(data: dict) -> Optional[str]:
+    """The recording player's Riot Name#TAG (falls back to summonerName on
+    pre-Riot-ID clients). Used once per session to tell "you" apart from
+    enemies in ChampionKill events - see SupervisorService."""
+    active = data.get("activePlayer") or {}
+    return active.get("riotId") or active.get("summonerName") or None
+
+
 def extract_snapshot(data: dict, mono_ns: int, utc: str) -> GameSnapshot:
     active = data.get("activePlayer") or {}
     row = _find_active_row(data)

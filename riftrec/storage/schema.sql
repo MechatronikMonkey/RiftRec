@@ -16,7 +16,10 @@ CREATE TABLE IF NOT EXISTS session (
     mono_anchor_ns INTEGER NOT NULL,     -- perf_counter_ns at started_utc
     app_version    TEXT    NOT NULL,
     schema_version INTEGER NOT NULL,
-    notes          TEXT
+    notes          TEXT,
+    active_riot_id TEXT                  -- Riot Name#TAG of the recording player, captured
+                                          -- from the Live Client API; used by RiftLab to
+                                          -- split kill/death/assist from enemy events.
 );
 
 CREATE TABLE IF NOT EXISTS hr_sample (

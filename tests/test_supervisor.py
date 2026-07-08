@@ -39,7 +39,7 @@ class _FlakyTransport:
     """Toggleable transport to simulate an H10 dropout + reconnect (EW-42)."""
 
     def __init__(self) -> None:
-        self._connected = True
+        self._connected = False  # loop performs the initial connect
         self.connect_calls = 0
         self.subscribe_calls = 0
 
@@ -52,10 +52,35 @@ class _FlakyTransport:
 
     async def connect(self, device) -> None:
         self.connect_calls += 1
-        self._connected = True  # reconnect succeeds
+        self._connected = True  # (re)connect succeeds
 
     async def subscribe(self, uuid, callback) -> None:
         self.subscribe_calls += 1
+        self.callback = callback
+
+    async def disconnect(self) -> None:
+        self._connected = False
+
+
+class _LateTransport:
+    """Fails the first `fail_first` connects (H10 not worn yet), then succeeds."""
+
+    def __init__(self, fail_first: int = 2) -> None:
+        self._connected = False
+        self._fail = fail_first
+        self.connect_calls = 0
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connected
+
+    async def connect(self, device) -> None:
+        self.connect_calls += 1
+        if self.connect_calls <= self._fail:
+            raise RuntimeError("H10 not found (not worn yet)")
+        self._connected = True
+
+    async def subscribe(self, uuid, callback) -> None:
         self.callback = callback
 
     async def disconnect(self) -> None:
@@ -180,6 +205,41 @@ def test_reconnects_and_logs_gap_on_h10_dropout() -> None:
         assert tr.connect_calls >= 2          # initial connect + >=1 reconnect
         assert tr.subscribe_calls >= 2        # re-subscribed after reconnect
         assert events >= 3                    # Riot kept recording through the drop
+
+
+def test_waits_for_h10_at_start_instead_of_erroring() -> None:
+    """EW-42: if the H10 isn't worn yet at start, the recorder retries the
+    connect instead of going to ERROR, and records once the strap is on."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Path(tmp) / "late.sqlite"
+        tr = _LateTransport(fail_first=2)
+        stop = asyncio.Event()
+        state = {"i": 0}
+
+        async def fetch():
+            i = state["i"]
+            state["i"] += 1
+            if i >= 5:
+                stop.set()
+                return None
+            return _riot_frame(i + 1)
+
+        svc = SupervisorService(
+            RecorderConfig(participant_id="P01", db_path=db, snapshot_interval_s=0,
+                           poll_interval_s=0.0, flush_interval_s=0.0,
+                           reconnect_backoff_s=0.0),
+            transport=tr, riot_fetch=fetch)
+        asyncio.run(svc.run(stop))
+
+        from riftrec.rte.state import RecorderState
+        assert svc.status.state is not RecorderState.ERROR
+        assert tr.connect_calls > 2          # retried past the initial failures
+        conn = sqlite3.connect(db)
+        try:
+            (sessions,) = conn.execute("SELECT COUNT(*) FROM session").fetchone()
+        finally:
+            conn.close()
+        assert sessions >= 1                 # recorded once the H10 came up
 
 
 def test_add_note_without_session_returns_false() -> None:

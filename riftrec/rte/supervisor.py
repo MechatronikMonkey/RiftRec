@@ -60,7 +60,9 @@ class SupervisorService:
         self._current: Optional[_Session] = None
         self._last_session_id: Optional[str] = None
         self._session_index = config.session_index or 0
-        # start_utc of an ongoing H10 outage, or None while the link is healthy
+        # H10 link supervision (EW-42): whether the link is currently up, and
+        # the start_utc of an ongoing outage (None while healthy / never up yet).
+        self._h10_up = False
         self._h10_gap_start: Optional[str] = None
 
     # -- per-match session management (synchronous, unit-testable) --------
@@ -136,7 +138,7 @@ class SupervisorService:
     # -- H10 link supervision (EW-42) -------------------------------------
 
     def _close_h10_gap(self) -> None:
-        """Link is back: close the open gap on the current session (if any)."""
+        """Close an open outage gap on the current session (if any)."""
         if self._h10_gap_start is None:
             return
         if self._current is not None:
@@ -145,36 +147,49 @@ class SupervisorService:
                 end_utc=datetime.now(timezone.utc).isoformat()))
         self._h10_gap_start = None
 
-    async def _keep_h10_connected(self, transport: BleTransport) -> None:
-        """Detect an H10 dropout, mark the gap, and re-establish the link.
+    def _mark_h10_up(self) -> None:
+        """Link is up (first connect or reconnect): close any gap, restore state."""
+        self._h10_up = True
+        self._close_h10_gap()
+        self.status.set(RecorderState.RECORDING if self._current else RecorderState.READY)
 
-        bleak does NOT reconnect on its own: once the strap goes out of range
-        the connection drops and notifications stop for good until we connect
-        again. The HR service needs no pairing, so a reconnect is just a fresh
-        connect + re-subscribe. Called every watch-loop tick; Riot recording
-        keeps running through the outage, only HR is paused (and gapped).
+    async def _keep_h10_connected(self, transport: BleTransport) -> None:
+        """Establish and keep the H10 link, retrying until it is up.
+
+        Handles both the initial connect and mid-session reconnects with one
+        path: bleak does NOT reconnect on its own, so once the strap is out of
+        range (or not yet worn at start) the link stays down until we connect
+        again. The HR service needs no pairing, so a (re)connect is just a fresh
+        connect + subscribe. Called every watch-loop tick; Riot recording keeps
+        running through an outage, only HR is paused (and gapped while a match
+        is live).
         """
         if transport.is_connected:
-            self._close_h10_gap()
+            if not self._h10_up:
+                print("[info] H10 connected")
+                self._mark_h10_up()
             return
 
-        if self._h10_gap_start is None:  # first tick of a new outage
-            self._h10_gap_start = datetime.now(timezone.utc).isoformat()
+        if self._h10_up:  # up -> down: a real mid-session drop
+            self._h10_up = False
             print("[warn] H10 disconnected - HR paused, reconnecting...")
             if self._current is not None:
                 self.status.set(RecorderState.CONNECTING)
+        # Only gap while a match is live (HR between matches is discarded).
+        if self._h10_gap_start is None and self._current is not None:
+            self._h10_gap_start = datetime.now(timezone.utc).isoformat()
 
         try:
             await transport.connect(self._config.device)
             await transport.subscribe(HR_MEASUREMENT_UUID, self._on_hr)
         except Exception as exc:
-            print(f"[warn] H10 reconnect failed: {exc}; retrying")
+            print(f"[warn] H10 connect failed: {exc}; retrying in "
+                  f"{self._config.reconnect_backoff_s}s")
             await asyncio.sleep(self._config.reconnect_backoff_s)
             return
 
-        print("[info] H10 reconnected")
-        self._close_h10_gap()
-        self.status.set(RecorderState.RECORDING if self._current else RecorderState.READY)
+        print("[info] H10 connected")
+        self._mark_h10_up()
 
     def add_note(self, text: str) -> bool:
         """Attach a note to the current session, or the last one between matches.
@@ -193,7 +208,7 @@ class SupervisorService:
     # -- async watch loop -------------------------------------------------
 
     async def run(self, stop: asyncio.Event) -> None:
-        """Connect the H10 once, then watch for matches until `stop` is set."""
+        """Watch for matches until `stop` is set, keeping the H10 linked."""
         # Backstop for EW-41: never record an untagged session. The GUI already
         # requires a participant id, but guard here too so any caller of the
         # supervisor produces attributable pilot data.
@@ -208,15 +223,11 @@ class SupervisorService:
 
             transport = BleakTransport()
 
+        # No hard initial connect: the watch loop's link supervisor establishes
+        # the connection and retries, exactly like a mid-session reconnect. So a
+        # fire-and-forget start waits for the strap to be put on instead of
+        # dying with ERROR if the H10 isn't worn yet (EW-42).
         self.status.set(RecorderState.CONNECTING)
-        try:
-            await transport.connect(self._config.device)
-            await transport.subscribe(HR_MEASUREMENT_UUID, self._on_hr)
-        except Exception as exc:  # H10 not found / not worn
-            print(f"[error] H10 connect failed: {exc}")
-            self.status.set(RecorderState.ERROR)
-            return
-        self.status.set(RecorderState.READY)
 
         fetch, close = self._make_riot_fetch()
         last_flush = time.monotonic()

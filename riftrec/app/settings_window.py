@@ -1,7 +1,9 @@
 """Pre-game settings window (EW-38): configure a hands-off recording run.
 
 Shown once before recording. Collects participant id, starting session index,
-the H10 BLE device, and the storage file. Returns a RecorderConfig (or None if
+the H10 BLE device, and a storage folder. The .sqlite filename is generated
+automatically (unique per run) so an existing recording can never be
+overwritten - the user only picks where. Returns a RecorderConfig (or None if
 cancelled). The recorder then runs unattended and records each detected match
 automatically.
 """
@@ -9,11 +11,11 @@ automatically.
 from __future__ import annotations
 
 import threading
-from datetime import date
 from pathlib import Path
 from typing import Optional
 
 from ..config import RecorderConfig
+from ..storage.sqlite_sink import unique_db_path
 from .device_scan import scan_polar_devices
 
 
@@ -45,7 +47,7 @@ class _SettingsDialog:
 
         self._participant = tk.StringVar()
         self._session = tk.StringVar(value="0")
-        self._db = tk.StringVar(value=str(Path.cwd() / "riftrec_session.sqlite"))
+        self._folder = tk.StringVar(value=str(Path.cwd()))
         self._device_var = tk.StringVar()
 
         r = 0
@@ -67,9 +69,13 @@ class _SettingsDialog:
         self._scan_btn.grid(row=r, column=2, sticky="we", padx=(6, 0))
 
         r += 1
-        ttk.Label(frm, text="Storage file").grid(row=r, column=0, sticky="w", pady=3)
-        ttk.Entry(frm, textvariable=self._db, width=30).grid(row=r, column=1, sticky="we")
+        ttk.Label(frm, text="Storage folder").grid(row=r, column=0, sticky="w", pady=3)
+        ttk.Entry(frm, textvariable=self._folder, width=30).grid(row=r, column=1, sticky="we")
         ttk.Button(frm, text="Browse", command=self._browse).grid(row=r, column=2, sticky="we", padx=(6, 0))
+
+        r += 1
+        ttk.Label(frm, text="A uniquely named .sqlite file is created here per run — nothing is overwritten.",
+                  foreground="#666").grid(row=r, column=0, columnspan=3, sticky="w", pady=(2, 0))
 
         r += 1
         ttk.Label(frm, text="Scan and pick a device, or keep \"auto\" to use the first Polar found.",
@@ -129,13 +135,13 @@ class _SettingsDialog:
         self._scan_btn.config(text="Scan", state="normal")
 
     def _browse(self) -> None:
-        path = self._filedialog.asksaveasfilename(
-            defaultextension=".sqlite",
-            filetypes=[("SQLite", "*.sqlite"), ("All files", "*.*")],
-            initialfile=Path(self._db.get()).name,
+        folder = self._filedialog.askdirectory(
+            initialdir=self._folder.get() or str(Path.cwd()),
+            mustexist=False,
+            title="Choose where to store recordings",
         )
-        if path:
-            self._db.set(path)
+        if folder:
+            self._folder.set(folder)
 
     def _start(self) -> None:
         participant = self._participant.get().strip() or None
@@ -152,15 +158,15 @@ class _SettingsDialog:
                     device = addr
                     break
 
-        db = self._db.get().strip() or "riftrec_session.sqlite"
-        # If the default name is untouched, auto-name by participant + date.
-        if Path(db).name == "riftrec_session.sqlite" and participant:
-            db = str(Path(db).with_name(f"{participant}_{date.today().isoformat()}.sqlite"))
+        # The user only picks a folder; we mint a unique filename so a previous
+        # recording is never overwritten (participant_date_time.sqlite).
+        folder = self._folder.get().strip() or str(Path.cwd())
+        db = unique_db_path(folder, participant)
 
         self.result = RecorderConfig(
             participant_id=participant,
             session_index=session,
-            db_path=Path(db),
+            db_path=db,
             device=device,
         )
         self._root.destroy()

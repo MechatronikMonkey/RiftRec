@@ -8,6 +8,7 @@ file is the contract to RiftLab.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +16,29 @@ from pathlib import Path
 from ..model import Gap, GameEvent, GameSnapshot, HrSample, Record, RrInterval, SessionMeta
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
+
+
+def unique_db_path(folder: str | Path, participant: str | None = None) -> Path:
+    """Return a collision-proof .sqlite path inside `folder` for one recording run.
+
+    Named by participant (or "session") plus a local timestamp down to the
+    second. If a file with that name already exists (e.g. two runs started in
+    the same second), a numeric suffix is appended until the name is free - so
+    a previous recording is NEVER reused or overwritten. Matches within a single
+    run still accumulate into this one file (session_index increments); only a
+    fresh run gets a fresh file.
+    """
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    stem = (participant or "").strip() or "session"
+    stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)  # filesystem-safe
+    base = f"{stem}_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}"
+    candidate = folder / f"{base}.sqlite"
+    n = 2
+    while candidate.exists():
+        candidate = folder / f"{base}_{n}.sqlite"
+        n += 1
+    return candidate
 
 
 def append_session_note(db_path: str | Path, session_id: str, text: str) -> None:

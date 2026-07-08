@@ -29,3 +29,10 @@ class RecorderConfig:
     # Riot Live Client Data API
     poll_interval_s: float = 1.0
     snapshot_interval_s: float = 5.0
+
+    # How often the supervisor commits the buffered rows to SQLite. Decoupled
+    # from poll_interval_s so a burst of poll ticks (objective/teamfight kills)
+    # does not turn into a burst of synchronous commits/checkpoints - which an
+    # on-access AV shield (Avast) scans one by one and which briefly block the
+    # watch loop (EW-51). Mirrors RecorderRuntime's flush throttle.
+    flush_interval_s: float = 2.0

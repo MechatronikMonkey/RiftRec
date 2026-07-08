@@ -6,16 +6,31 @@ match, no async timing) and checks the resulting SQLite file.
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 import tempfile
 from pathlib import Path
 
 from riftrec.config import RecorderConfig
 from riftrec.rte.supervisor import SupervisorService
+from riftrec.storage import sqlite_sink as _sink_mod
 
 
 def _hr(bpm: int) -> bytes:
     return bytes([0x00, bpm])  # flags=0 (uint8 HR, no RR)
+
+
+class _FakeTransport:
+    """No-op BLE transport so run() can be driven without hardware."""
+
+    async def connect(self, device) -> None:
+        pass
+
+    async def subscribe(self, uuid, callback) -> None:
+        self.callback = callback
+
+    async def disconnect(self) -> None:
+        pass
 
 
 def _riot_frame(kill_id: int) -> dict:

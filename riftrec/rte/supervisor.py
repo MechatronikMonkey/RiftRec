@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -158,18 +159,28 @@ class SupervisorService:
         self.status.set(RecorderState.READY)
 
         fetch, close = self._make_riot_fetch()
+        last_flush = time.monotonic()
         try:
             while not stop.is_set():
                 data = await fetch()
                 if data is None:
                     if self._current is not None:
-                        self._close_session()      # match ended
+                        self._close_session()      # match ended (close flushes)
                     await asyncio.sleep(self._config.poll_interval_s)
                     continue
                 if self._current is None:
                     self._open_session()           # match started
+                    last_flush = time.monotonic()
                 self._record_riot(data)
-                self._current.sink.flush()
+                # Throttle commits: buffer rows across poll ticks and flush on a
+                # fixed cadence, so an event burst doesn't fan out into a burst
+                # of synchronous commits (EW-51). Buffered-but-unflushed rows are
+                # only at risk on a hard crash, and _close_session flushes on any
+                # clean stop or match end.
+                now = time.monotonic()
+                if now - last_flush >= self._config.flush_interval_s:
+                    self._current.sink.flush()
+                    last_flush = now
                 await asyncio.sleep(self._config.poll_interval_s)
         finally:
             if self._current is not None:

@@ -123,6 +123,11 @@ def main(argv: list[str] | None = None) -> None:
     config = _parse_args(argv)
     if config == "gui":
         _redirect_output_if_windowless()
+        from .app.single_instance import acquire_single_instance, warn_already_running
+
+        if not acquire_single_instance():
+            warn_already_running()
+            return
         from .app.runner import run_gui
 
         run_gui()

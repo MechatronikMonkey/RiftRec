@@ -5,7 +5,7 @@ title RiftRec Recorder
 rem ===================================================================
 rem  RiftRec pilot launcher - just double-click this file.
 rem  First run: sets up a local Python environment (needs internet).
-rem  Every run after that: starts the recorder straight away.
+rem  Every run after that: starts the recorder and closes this window.
 rem ===================================================================
 
 rem Always work from this script's own folder (the RiftRec folder),
@@ -29,6 +29,7 @@ if not defined PYLAUNCH (
 
 set "VENV=.venv"
 set "VPY=%VENV%\Scripts\python.exe"
+set "VPYW=%VENV%\Scripts\pythonw.exe"
 
 rem --- first-time setup: create the environment + install packages ---
 if not exist "%VPY%" (
@@ -47,13 +48,11 @@ if not exist "%VPY%" (
     echo.
 )
 
-rem --- launch the recorder -------------------------------------------
-"%VPY%" -m riftrec gui
-if errorlevel 1 (
-    echo.
-    echo   The recorder closed with an error. See the messages above.
-    pause
-)
+rem --- launch the recorder detached, then close this window ----------
+rem pythonw.exe = no console window; start = run independently so this
+rem launcher window can close. App output goes to %APPDATA%\RiftRec\riftrec.log.
+if not exist "%VPYW%" set "VPYW=%VPY%"
+start "" "%VPYW%" -m riftrec gui
 exit /b 0
 
 :setup_failed

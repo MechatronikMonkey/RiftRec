@@ -95,9 +95,34 @@ def _parse_args(argv: list[str] | None) -> "RecorderConfig | str":
     )
 
 
+def _redirect_output_if_windowless() -> None:
+    """Under pythonw.exe (no console) sys.stdout/stderr are None, so the app's
+    print() calls would crash. Send them to a log file instead - which doubles
+    as a troubleshooting log for pilots."""
+    import sys
+
+    if sys.stdout is not None and sys.stderr is not None:
+        return  # normal console run - leave streams alone
+    import os
+
+    log_dir = Path(os.environ.get("APPDATA") or Path.home()) / "RiftRec"
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        sink = open(log_dir / "riftrec.log", "a", buffering=1, encoding="utf-8")
+    except OSError:
+        import io
+
+        sink = io.StringIO()  # last resort: swallow output rather than crash
+    if sys.stdout is None:
+        sys.stdout = sink
+    if sys.stderr is None:
+        sys.stderr = sink
+
+
 def main(argv: list[str] | None = None) -> None:
     config = _parse_args(argv)
     if config == "gui":
+        _redirect_output_if_windowless()
         from .app.runner import run_gui
 
         run_gui()

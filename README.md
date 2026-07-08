@@ -77,6 +77,13 @@ metadata (EW-41), self-report NASA-TLX/PANAS.
 
 ## Setup
 
+**Pilots (Windows): just double-click `Start RiftRec.bat`.** On the first run it
+creates a local `.venv` and installs the recorder-only dependencies
+(`requirements-recorder.txt` — no PMD/dongle spike packages); every run after
+that launches the tray recorder straight away. Needs Python 3.11+ on PATH.
+
+Developers / full toolset (tests, spikes, PMD, dongle):
+
 ```
 pip install -r requirements.txt
 ```

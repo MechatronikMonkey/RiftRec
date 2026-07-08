@@ -1,0 +1,8 @@
+# Runtime dependencies for the RiftRec recorder (the `gui` / `record` path).
+# Lean subset of requirements.txt used by the double-click launcher: no PMD/ECG
+# (bleakheart) or USB-dongle (bumble) spike deps, so a pilot install stays small
+# and can't fail on those heavier packages.
+bleak      # BLE access to the Polar H10 (standard HR/RR service)
+httpx      # Riot Live Client Data poller
+pystray    # system tray icon
+pillow     # tray icon rendering (PIL)

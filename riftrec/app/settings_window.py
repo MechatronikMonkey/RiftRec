@@ -16,6 +16,7 @@ from typing import Optional
 
 from ..config import RecorderConfig
 from ..storage.sqlite_sink import unique_db_path
+from .prefs import Prefs, load_prefs, save_prefs
 from .device_scan import scan_polar_devices
 
 
@@ -45,9 +46,12 @@ class _SettingsDialog:
         frm = ttk.Frame(root, padding=14)
         frm.grid(sticky="nsew")
 
-        self._participant = tk.StringVar()
+        # Pre-fill participant id + storage folder from the last run (EW-43) so
+        # pilots don't retype them every time.
+        prefs = load_prefs()
+        self._participant = tk.StringVar(value=prefs.participant_id or "")
         self._session = tk.StringVar(value="0")
-        self._folder = tk.StringVar(value=str(Path.cwd()))
+        self._folder = tk.StringVar(value=prefs.storage_folder or str(Path.cwd()))
         self._device_var = tk.StringVar()
 
         r = 0
@@ -172,6 +176,9 @@ class _SettingsDialog:
         # recording is never overwritten (participant_date_time.sqlite).
         folder = self._folder.get().strip() or str(Path.cwd())
         db = unique_db_path(folder, participant)
+
+        # Remember participant + folder for next time (EW-43).
+        save_prefs(Prefs(participant_id=participant, storage_folder=folder))
 
         self.result = RecorderConfig(
             participant_id=participant,

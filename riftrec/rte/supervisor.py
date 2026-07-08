@@ -24,7 +24,7 @@ from .. import SCHEMA_VERSION, __version__
 from ..clock import SessionClock
 from ..config import RecorderConfig
 from ..hal.ble import BleTransport
-from ..model import GameEvent, HrSample, RrInterval, SessionMeta
+from ..model import Gap, GameEvent, HrSample, RrInterval, SessionMeta
 from ..sources.h10 import HR_MEASUREMENT_UUID, parse_hr_measurement
 from ..sources.riot import DEFAULT_BASE_URL, active_riot_id, extract_snapshot, new_events
 from ..storage.sqlite_sink import SqliteSink, append_session_note
@@ -60,6 +60,8 @@ class SupervisorService:
         self._current: Optional[_Session] = None
         self._last_session_id: Optional[str] = None
         self._session_index = config.session_index or 0
+        # start_utc of an ongoing H10 outage, or None while the link is healthy
+        self._h10_gap_start: Optional[str] = None
 
     # -- per-match session management (synchronous, unit-testable) --------
 
@@ -120,9 +122,59 @@ class SupervisorService:
         cur = self._current
         if cur is None:
             return
+        # If the H10 is still out when the match ends, record the gap up to now
+        # on this session before we close it. A fresh gap starts next tick if
+        # the link is still down (but between matches HR is discarded anyway).
+        if self._h10_gap_start is not None:
+            cur.sink.mark_gap(Gap(source="h10", start_utc=self._h10_gap_start,
+                                  end_utc=datetime.now(timezone.utc).isoformat()))
+            self._h10_gap_start = None
         cur.sink.close_session(datetime.now(timezone.utc).isoformat())
         self._current = None
         self.status.set(RecorderState.READY)
+
+    # -- H10 link supervision (EW-42) -------------------------------------
+
+    def _close_h10_gap(self) -> None:
+        """Link is back: close the open gap on the current session (if any)."""
+        if self._h10_gap_start is None:
+            return
+        if self._current is not None:
+            self._current.sink.mark_gap(Gap(
+                source="h10", start_utc=self._h10_gap_start,
+                end_utc=datetime.now(timezone.utc).isoformat()))
+        self._h10_gap_start = None
+
+    async def _keep_h10_connected(self, transport: BleTransport) -> None:
+        """Detect an H10 dropout, mark the gap, and re-establish the link.
+
+        bleak does NOT reconnect on its own: once the strap goes out of range
+        the connection drops and notifications stop for good until we connect
+        again. The HR service needs no pairing, so a reconnect is just a fresh
+        connect + re-subscribe. Called every watch-loop tick; Riot recording
+        keeps running through the outage, only HR is paused (and gapped).
+        """
+        if transport.is_connected:
+            self._close_h10_gap()
+            return
+
+        if self._h10_gap_start is None:  # first tick of a new outage
+            self._h10_gap_start = datetime.now(timezone.utc).isoformat()
+            print("[warn] H10 disconnected - HR paused, reconnecting...")
+            if self._current is not None:
+                self.status.set(RecorderState.CONNECTING)
+
+        try:
+            await transport.connect(self._config.device)
+            await transport.subscribe(HR_MEASUREMENT_UUID, self._on_hr)
+        except Exception as exc:
+            print(f"[warn] H10 reconnect failed: {exc}; retrying")
+            await asyncio.sleep(self._config.reconnect_backoff_s)
+            return
+
+        print("[info] H10 reconnected")
+        self._close_h10_gap()
+        self.status.set(RecorderState.RECORDING if self._current else RecorderState.READY)
 
     def add_note(self, text: str) -> bool:
         """Attach a note to the current session, or the last one between matches.
@@ -170,6 +222,7 @@ class SupervisorService:
         last_flush = time.monotonic()
         try:
             while not stop.is_set():
+                await self._keep_h10_connected(transport)   # reconnect + gap (EW-42)
                 data = await fetch()
                 if data is None:
                     if self._current is not None:

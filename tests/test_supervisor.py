@@ -23,6 +23,8 @@ def _hr(bpm: int) -> bytes:
 class _FakeTransport:
     """No-op BLE transport so run() can be driven without hardware."""
 
+    is_connected = True
+
     async def connect(self, device) -> None:
         pass
 
@@ -31,6 +33,33 @@ class _FakeTransport:
 
     async def disconnect(self) -> None:
         pass
+
+
+class _FlakyTransport:
+    """Toggleable transport to simulate an H10 dropout + reconnect (EW-42)."""
+
+    def __init__(self) -> None:
+        self._connected = True
+        self.connect_calls = 0
+        self.subscribe_calls = 0
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connected
+
+    def drop(self) -> None:
+        self._connected = False
+
+    async def connect(self, device) -> None:
+        self.connect_calls += 1
+        self._connected = True  # reconnect succeeds
+
+    async def subscribe(self, uuid, callback) -> None:
+        self.subscribe_calls += 1
+        self.callback = callback
+
+    async def disconnect(self) -> None:
+        self._connected = False
 
 
 def _riot_frame(kill_id: int) -> dict:
@@ -109,6 +138,48 @@ def test_run_refuses_without_participant_id() -> None:
         from riftrec.rte.state import RecorderState
         assert svc.status.state is RecorderState.ERROR
         assert not db.exists()  # no session file created
+
+
+def test_reconnects_and_logs_gap_on_h10_dropout() -> None:
+    """EW-42: an H10 outage mid-match is gapped and the link is re-established,
+    while Riot recording keeps running through the outage."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Path(tmp) / "gap.sqlite"
+        tr = _FlakyTransport()
+        stop = asyncio.Event()
+        state = {"i": 0}
+
+        async def fetch():
+            i = state["i"]
+            state["i"] += 1
+            if i == 1:
+                tr.drop()           # H10 drops after the first frame
+            if i >= 4:
+                stop.set()
+                return None
+            return _riot_frame(i + 1)
+
+        svc = SupervisorService(
+            RecorderConfig(participant_id="P01", db_path=db, snapshot_interval_s=0,
+                           poll_interval_s=0.0, flush_interval_s=0.0,
+                           reconnect_backoff_s=0.0),
+            transport=tr, riot_fetch=fetch)
+        asyncio.run(svc.run(stop))
+
+        conn = sqlite3.connect(db)
+        try:
+            gaps = conn.execute(
+                "SELECT source, start_utc, end_utc FROM gap").fetchall()
+            (events,) = conn.execute("SELECT COUNT(*) FROM game_event").fetchone()
+        finally:
+            conn.close()
+
+        assert len(gaps) == 1, gaps
+        assert gaps[0][0] == "h10"
+        assert gaps[0][1] and gaps[0][2]      # gap has both a start and an end
+        assert tr.connect_calls >= 2          # initial connect + >=1 reconnect
+        assert tr.subscribe_calls >= 2        # re-subscribed after reconnect
+        assert events >= 3                    # Riot kept recording through the drop
 
 
 def test_add_note_without_session_returns_false() -> None:

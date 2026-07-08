@@ -36,3 +36,8 @@ class RecorderConfig:
     # on-access AV shield (Avast) scans one by one and which briefly block the
     # watch loop (EW-51). Mirrors RecorderRuntime's flush throttle.
     flush_interval_s: float = 2.0
+
+    # When the H10 drops (out of range, strap off), how long to wait between
+    # reconnect attempts. bleak does not reconnect on its own; the supervisor
+    # detects the drop, logs a gap, and re-establishes the link (EW-42).
+    reconnect_backoff_s: float = 3.0

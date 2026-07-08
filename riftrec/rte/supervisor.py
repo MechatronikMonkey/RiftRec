@@ -142,6 +142,14 @@ class SupervisorService:
 
     async def run(self, stop: asyncio.Event) -> None:
         """Connect the H10 once, then watch for matches until `stop` is set."""
+        # Backstop for EW-41: never record an untagged session. The GUI already
+        # requires a participant id, but guard here too so any caller of the
+        # supervisor produces attributable pilot data.
+        if not (self._config.participant_id or "").strip():
+            print("[error] no participant id set - refusing to record (EW-41)")
+            self.status.set(RecorderState.ERROR)
+            return
+
         transport = self._transport
         if transport is None:
             from ..hal.ble_bleak import BleakTransport

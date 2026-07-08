@@ -99,6 +99,18 @@ def test_two_matches_accumulate_in_one_file_with_notes() -> None:
             conn.close()
 
 
+def test_run_refuses_without_participant_id() -> None:
+    """EW-41 backstop: no participant id -> ERROR, nothing recorded."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Path(tmp) / "untagged.sqlite"
+        svc = SupervisorService(RecorderConfig(participant_id=None, db_path=db),
+                                transport=_FakeTransport())
+        asyncio.run(svc.run(asyncio.Event()))
+        from riftrec.rte.state import RecorderState
+        assert svc.status.state is RecorderState.ERROR
+        assert not db.exists()  # no session file created
+
+
 def test_add_note_without_session_returns_false() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         svc = SupervisorService(RecorderConfig(db_path=Path(tmp) / "x.sqlite"))

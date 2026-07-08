@@ -51,8 +51,13 @@ class _SettingsDialog:
         self._device_var = tk.StringVar()
 
         r = 0
-        ttk.Label(frm, text="Participant ID").grid(row=r, column=0, sticky="w", pady=3)
+        ttk.Label(frm, text="Participant ID *").grid(row=r, column=0, sticky="w", pady=3)
         ttk.Entry(frm, textvariable=self._participant, width=32).grid(row=r, column=1, columnspan=2, sticky="we")
+
+        r += 1
+        self._error = tk.StringVar()
+        ttk.Label(frm, textvariable=self._error, foreground="#c0392b").grid(
+            row=r, column=1, columnspan=2, sticky="w")
 
         r += 1
         ttk.Label(frm, text="Start session #").grid(row=r, column=0, sticky="w", pady=3)
@@ -144,7 +149,12 @@ class _SettingsDialog:
             self._folder.set(folder)
 
     def _start(self) -> None:
-        participant = self._participant.get().strip() or None
+        # Participant ID is mandatory (EW-41): without it a pilot session can't
+        # be attributed to a player. Block the run and keep the dialog open.
+        participant = self._participant.get().strip()
+        if not participant:
+            self._error.set("Participant ID is required (the player's pseudonymous study code).")
+            return
         try:
             session = int(self._session.get()) if self._session.get().strip() else 0
         except ValueError:

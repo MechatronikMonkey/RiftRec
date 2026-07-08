@@ -173,11 +173,16 @@ class SupervisorService:
         if self._h10_up:  # up -> down: a real mid-session drop
             self._h10_up = False
             print("[warn] H10 disconnected - HR paused, reconnecting...")
-            if self._current is not None:
+
+        # While the link is down and a match is live, surface it as CONNECTING
+        # (HR paused) and open a gap - regardless of whether the H10 was ever up
+        # yet, so a match that started before the strap connected doesn't show a
+        # green RECORDING with no HR behind it.
+        if self._current is not None:
+            if self.status.state is not RecorderState.CONNECTING:
                 self.status.set(RecorderState.CONNECTING)
-        # Only gap while a match is live (HR between matches is discarded).
-        if self._h10_gap_start is None and self._current is not None:
-            self._h10_gap_start = datetime.now(timezone.utc).isoformat()
+            if self._h10_gap_start is None:
+                self._h10_gap_start = datetime.now(timezone.utc).isoformat()
 
         try:
             await transport.connect(self._config.device)

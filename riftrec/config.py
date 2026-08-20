@@ -30,6 +30,15 @@ class RecorderConfig:
     poll_interval_s: float = 1.0
     snapshot_interval_s: float = 5.0
 
+    # How often the complete `allgamedata` response is stored raw (EW-86).
+    # Deliberately much coarser than the snapshot interval: the parsed tables
+    # already carry the fast-moving numbers, while the raw channel preserves
+    # what we do not parse today - champion, position, team, items, runes and
+    # the full enemy scoreboard. Compressed, this costs ~300 kB per match;
+    # at the snapshot interval it would be ~16 MB, which does not fit the
+    # manual e-mail return path.
+    raw_interval_s: float = 30.0
+
     # How often the supervisor commits the buffered rows to SQLite. Decoupled
     # from poll_interval_s so a burst of poll ticks (objective/teamfight kills)
     # does not turn into a burst of synchronous commits/checkpoints - which an

@@ -154,10 +154,39 @@ Tests (no H10, no match): `PYTHONPATH=. python -m pytest tests/`, or run a singl
 ## Data schema (SQLite = contract to RiftLab)
 
 `riftrec/storage/schema.sql` is authoritative. Tables: `session` (header + `mono_anchor_ns` /
-`started_utc` as the mono→UTC anchor, `participant_id`, `active_riot_id`), `hr_sample`,
-`rr_interval` (own table, the load-bearing HRV signal), `game_event` (deduplicated by Riot
-`EventID`), `game_snapshot` (KDA / CS / gold trend), `gap` (dropout marker). Schema version in
+`started_utc` as the mono→UTC anchor, `participant_id`, `active_riot_id`), `hr_sample`
+(incl. `contact`), `rr_interval` (own table, the load-bearing HRV signal), `game_event`
+(deduplicated by Riot `EventID`), `game_snapshot` (KDA / CS / gold trend), `gap` (dropout
+marker), plus the raw channels `hr_raw` and `game_raw`. Schema version in
 `riftrec/__init__.py:SCHEMA_VERSION`.
+
+### Raw channels — nothing is discarded at capture time
+
+The parsed tables are a convenience view. What the sources actually deliver is kept verbatim,
+so that an analysis nobody thought of today is still possible later:
+
+* **`hr_raw`** — every unparsed 0x2A37 notification. Makes a parser bug recoverable and keeps
+  fields we do not decode (e.g. Energy Expended).
+* **`hr_sample.contact`** — BLE sensor contact status: `1` skin contact, `0` none, `NULL` when
+  the device does not report it. Per BLE spec the "detected" bit is only meaningful together
+  with the "supported" bit; both are read together, so a device without the feature yields
+  `NULL` rather than a fake "no contact". This is the independent criterion for discarding an
+  HRV window that an artefact-correction rate alone cannot give.
+* **`game_raw`** — the complete `allgamedata` response as zlib-compressed JSON, stored on the
+  first poll, then every `raw_interval_s` (default 30 s), plus the final frame before
+  `GameEnd`. Holds everything the parsed tables drop: champion, position, team, items, runes,
+  `respawnTimer` and the full scoreboard of all ten players. Compressed this is ~300 kB per
+  match; uncompressed at snapshot cadence it would be ~16 MB, which does not fit a manual
+  e-mail return path.
+
+**Pseudonymisation.** `allgamedata` carries the Riot IDs of all ten players — nine of whom
+never consented to anything. Before storage, foreign names are replaced by a session-salted
+hash (`p_<12 hex>`) consistently across `game_raw` and `game_event.payload_json`, so kill and
+death attribution still works; bare `riotIdTagLine` values are cleared. The recording player's
+own id is left readable, since RiftLab uses it to tell own events from enemy ones.
+
+Reading a raw frame: `json.loads(zlib.decompress(blob))`, or
+`riftrec.sources.riot.decompress_game_data`.
 
 ## Connecting the Polar H10 — technical notes
 

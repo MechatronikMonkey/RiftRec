@@ -15,11 +15,18 @@ from typing import Optional, Union
 
 @dataclass(slots=True)
 class HrSample:
-    """A heart-rate value (bpm) from an HR measurement notification."""
+    """A heart-rate value (bpm) from an HR measurement notification.
+
+    `contact` carries the BLE sensor contact status: True/False when the sensor
+    reports it, None when the device does not support the feature. It is the
+    independent criterion for "discard this window" that the correction rate
+    alone cannot provide (EW-86).
+    """
 
     mono_ns: int
     utc: str
     hr_bpm: int
+    contact: Optional[bool] = None
 
 
 @dataclass(slots=True)
@@ -72,6 +79,39 @@ class GameSnapshot:
 
 
 @dataclass(slots=True)
+class HrRaw:
+    """The unparsed 0x2A37 notification payload (EW-86).
+
+    Stored alongside the parsed HrSample/RrInterval rows so that a parser bug
+    is recoverable and fields we do not decode today (e.g. Energy Expended)
+    are not lost. Payloads are a handful of bytes, so this is cheap.
+    """
+
+    mono_ns: int
+    utc: str
+    payload: bytes
+
+
+@dataclass(slots=True)
+class GameRaw:
+    """A complete `allgamedata` response, zlib-compressed (EW-86).
+
+    The parsed tables keep only the active player's scoreboard. Everything else
+    the API delivers - champion, position, team, items, runes and the full
+    enemy scoreboard for all ten players - lives only here. Compressed because
+    an uncompressed response is ~40 kB and the return path is e-mail, not cloud.
+
+    Foreign Riot IDs are pseudonymised before compression; see
+    `riot.pseudonymise_foreign_ids`.
+    """
+
+    mono_ns: int
+    utc: str
+    game_time_s: Optional[float]
+    payload_zlib: bytes
+
+
+@dataclass(slots=True)
 class Gap:
     """Marker for a connection gap of a source (EW-39).
 
@@ -85,7 +125,7 @@ class Gap:
 
 
 # Everything a source may put onto the queue via `emit`.
-Record = Union[HrSample, RrInterval, GameEvent, GameSnapshot]
+Record = Union[HrSample, RrInterval, GameEvent, GameSnapshot, HrRaw, GameRaw]
 
 
 @dataclass(slots=True)

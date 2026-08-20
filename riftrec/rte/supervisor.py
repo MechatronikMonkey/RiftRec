@@ -24,9 +24,17 @@ from .. import SCHEMA_VERSION, __version__
 from ..clock import SessionClock
 from ..config import RecorderConfig
 from ..hal.ble import BleTransport
-from ..model import Gap, GameEvent, HrSample, RrInterval, SessionMeta
+from ..model import Gap, GameEvent, GameRaw, HrRaw, HrSample, RrInterval, SessionMeta
 from ..sources.h10 import HR_MEASUREMENT_UUID, parse_hr_measurement
-from ..sources.riot import DEFAULT_BASE_URL, active_riot_id, extract_snapshot, new_events
+from ..sources.riot import (
+    DEFAULT_BASE_URL,
+    active_riot_id,
+    apply_pseudonyms,
+    build_pseudonym_map,
+    compress_game_data,
+    extract_snapshot,
+    new_events,
+)
 from ..storage.sqlite_sink import SqliteSink, append_session_note
 from .state import Observable, RecorderState
 
@@ -43,6 +51,9 @@ class _Session:
         self.last_event_id: Optional[int] = None
         self.last_snapshot_mono = 0
         self.active_riot_id: Optional[str] = None
+        self.last_raw_mono: Optional[int] = None
+        # name -> session-local pseudonym for the nine other players (EW-86)
+        self.pseudonyms: dict[str, str] = {}
 
 
 class SupervisorService:
@@ -92,9 +103,11 @@ class SupervisorService:
         cur = self._current
         if cur is None:
             return
-        hr, rr_list = parse_hr_measurement(payload)
+        hr, rr_list, contact = parse_hr_measurement(payload)
         mono, utc = cur.clock.now()
-        cur.sink.write(HrSample(mono_ns=mono, utc=utc, hr_bpm=hr))
+        # Raw first: if parsing ever proves wrong, the payload is still there.
+        cur.sink.write(HrRaw(mono_ns=mono, utc=utc, payload=bytes(payload)))
+        cur.sink.write(HrSample(mono_ns=mono, utc=utc, hr_bpm=hr, contact=contact))
         for rr_ms in rr_list:
             cur.sink.write(RrInterval(mono_ns=mono, utc=utc, rr_ms=rr_ms))
 
@@ -107,18 +120,39 @@ class SupervisorService:
             if rid:
                 cur.active_riot_id = rid
                 cur.sink.set_active_riot_id(rid)
+        # Built once per session, from the first response carrying a player
+        # list, and reused for raw and event payloads so that the kill/death
+        # attribution stays consistent (EW-86).
+        if not cur.pseudonyms and data.get("allPlayers"):
+            cur.pseudonyms = build_pseudonym_map(data, cur.clock.started_utc)
         mono, utc = cur.clock.now()
         events = (data.get("events") or {}).get("Events") or []
+        end_seen = False
         for event in new_events(events, cur.last_event_id):
             cur.last_event_id = event.get("EventID", cur.last_event_id)
             cur.sink.write(GameEvent(
                 mono_ns=mono, utc=utc, game_time_s=event.get("EventTime"),
                 event_id=event.get("EventID"), event_type=event.get("EventName", "Unknown"),
-                payload_json=json.dumps(event),
+                payload_json=json.dumps(apply_pseudonyms(event, cur.pseudonyms)),
             ))
+            if event.get("EventName") == "GameEnd":
+                end_seen = True
         if mono - cur.last_snapshot_mono >= self._config.snapshot_interval_s * 1e9:
             cur.sink.write(extract_snapshot(data, mono, utc))
             cur.last_snapshot_mono = mono
+        # First poll always, then at the coarse raw interval; plus the last
+        # response before the match ends, so the final scoreboard is kept.
+        due = (
+            cur.last_raw_mono is None
+            or mono - cur.last_raw_mono >= self._config.raw_interval_s * 1e9
+        )
+        if due or end_seen:
+            cur.sink.write(GameRaw(
+                mono_ns=mono, utc=utc,
+                game_time_s=(data.get("gameData") or {}).get("gameTime"),
+                payload_zlib=compress_game_data(data, cur.pseudonyms),
+            ))
+            cur.last_raw_mono = mono
 
     def _close_session(self) -> None:
         cur = self._current

@@ -13,7 +13,9 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..model import Gap, GameEvent, GameSnapshot, HrSample, Record, RrInterval, SessionMeta
+from ..model import (
+    Gap, GameEvent, GameRaw, GameSnapshot, HrRaw, HrSample, Record, RrInterval, SessionMeta,
+)
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
@@ -72,6 +74,8 @@ class SqliteSink:
             "rr_interval": [],
             "game_event": [],
             "game_snapshot": [],
+            "hr_raw": [],
+            "game_raw": [],
         }
 
     # -- Lifecycle ---------------------------------------------------------
@@ -88,6 +92,10 @@ class SqliteSink:
         cols = {row[1] for row in conn.execute("PRAGMA table_info(session)")}
         if "active_riot_id" not in cols:
             conn.execute("ALTER TABLE session ADD COLUMN active_riot_id TEXT")
+        # Same for the sensor contact column added with schema version 2 (EW-86).
+        hr_cols = {row[1] for row in conn.execute("PRAGMA table_info(hr_sample)")}
+        if "contact" not in hr_cols:
+            conn.execute("ALTER TABLE hr_sample ADD COLUMN contact INTEGER")
         conn.execute(
             "INSERT INTO session (session_id, participant_id, session_index, "
             "started_utc, ended_utc, mono_anchor_ns, app_version, schema_version, notes) "
@@ -105,7 +113,16 @@ class SqliteSink:
     def write(self, record: Record) -> None:
         sid = self._session_id
         if isinstance(record, HrSample):
-            self._buf["hr_sample"].append((sid, record.mono_ns, record.utc, record.hr_bpm))
+            contact = None if record.contact is None else int(record.contact)
+            self._buf["hr_sample"].append(
+                (sid, record.mono_ns, record.utc, record.hr_bpm, contact)
+            )
+        elif isinstance(record, HrRaw):
+            self._buf["hr_raw"].append((sid, record.mono_ns, record.utc, record.payload))
+        elif isinstance(record, GameRaw):
+            self._buf["game_raw"].append((
+                sid, record.mono_ns, record.utc, record.game_time_s, record.payload_zlib,
+            ))
         elif isinstance(record, RrInterval):
             self._buf["rr_interval"].append((sid, record.mono_ns, record.utc, record.rr_ms))
         elif isinstance(record, GameEvent):

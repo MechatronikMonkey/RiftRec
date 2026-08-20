@@ -26,7 +26,31 @@ CREATE TABLE IF NOT EXISTS hr_sample (
     session_id TEXT    NOT NULL REFERENCES session(session_id),
     mono_ns    INTEGER NOT NULL,
     utc        TEXT    NOT NULL,
-    hr_bpm     INTEGER NOT NULL
+    hr_bpm     INTEGER NOT NULL,
+    contact    INTEGER              -- BLE sensor contact: 1 = skin contact, 0 = none,
+                                     -- NULL = device does not report it. Independent
+                                     -- discard criterion for HRV windows (EW-86).
+);
+
+-- Unparsed HR notification payloads. Keeps a parser bug recoverable and
+-- preserves fields we do not decode today (EW-86).
+CREATE TABLE IF NOT EXISTS hr_raw (
+    session_id TEXT    NOT NULL REFERENCES session(session_id),
+    mono_ns    INTEGER NOT NULL,
+    utc        TEXT    NOT NULL,
+    payload    BLOB    NOT NULL
+);
+
+-- Complete `allgamedata` responses, zlib-compressed JSON. Holds everything the
+-- parsed tables drop: champion, position, team, items, runes and the full
+-- scoreboard of all ten players. Foreign Riot IDs are pseudonymised before
+-- storage; the recording player's own id is left as-is (see session.active_riot_id).
+CREATE TABLE IF NOT EXISTS game_raw (
+    session_id   TEXT    NOT NULL REFERENCES session(session_id),
+    mono_ns      INTEGER NOT NULL,
+    utc          TEXT    NOT NULL,
+    game_time_s  REAL,
+    payload_zlib BLOB    NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS rr_interval (
@@ -67,6 +91,8 @@ CREATE TABLE IF NOT EXISTS gap (
 );
 
 CREATE INDEX IF NOT EXISTS idx_hr_sample_session   ON hr_sample(session_id, mono_ns);
+CREATE INDEX IF NOT EXISTS idx_hr_raw_session      ON hr_raw(session_id, mono_ns);
+CREATE INDEX IF NOT EXISTS idx_game_raw_session    ON game_raw(session_id, mono_ns);
 CREATE INDEX IF NOT EXISTS idx_rr_interval_session ON rr_interval(session_id, mono_ns);
 CREATE INDEX IF NOT EXISTS idx_game_event_session  ON game_event(session_id, mono_ns);
 CREATE INDEX IF NOT EXISTS idx_game_snapshot_session ON game_snapshot(session_id, mono_ns);

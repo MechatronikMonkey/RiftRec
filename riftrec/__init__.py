@@ -11,4 +11,7 @@ __version__ = "0.1.0"
 
 # Version of the SQLite session schema (= contract between RiftRec and RiftLab).
 # Increment on every incompatible schema change.
-SCHEMA_VERSION = 1
+#
+# 2 (EW-86): raw channels `hr_raw` and `game_raw` plus `hr_sample.contact`.
+#            Additive only - RiftLab keeps reading version 1 files unchanged.
+SCHEMA_VERSION = 2

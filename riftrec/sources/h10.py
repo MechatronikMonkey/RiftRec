@@ -19,27 +19,35 @@ from typing import Optional
 
 from ..clock import SessionClock
 from ..hal.ble import BleTransport
-from ..model import HrSample, RrInterval
+from ..model import HrRaw, HrSample, RrInterval
 from .base import EmitFn
 
 # Standard BLE Heart Rate Measurement characteristic.
 HR_MEASUREMENT_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
 
 # Flags byte (first byte of the payload)
-_FLAG_HR_16BIT = 0x01   # HR as uint16 instead of uint8
-_FLAG_ENERGY = 0x08     # Energy Expended field present (skipped)
-_FLAG_RR = 0x10         # RR interval list present
+_FLAG_HR_16BIT = 0x01           # HR as uint16 instead of uint8
+_FLAG_CONTACT_DETECTED = 0x02   # skin contact detected (only valid with _SUPPORTED)
+_FLAG_CONTACT_SUPPORTED = 0x04  # device reports contact status at all
+_FLAG_ENERGY = 0x08             # Energy Expended field present (skipped, kept in HrRaw)
+_FLAG_RR = 0x10                 # RR interval list present
 
 
-def parse_hr_measurement(data: bytes) -> tuple[int, list[float]]:
-    """Split a 0x2A37 payload into (HR in bpm, list of RR intervals in ms).
+def parse_hr_measurement(data: bytes) -> tuple[int, list[float], Optional[bool]]:
+    """Split a 0x2A37 payload into (HR in bpm, RR intervals in ms, contact).
 
     Layout per BLE spec: flags byte, then HR (uint8 or uint16 LE), optional
-    Energy Expended (uint16, skipped), then 0..n RR values (uint16 LE, unit
-    1/1024 s).
+    Energy Expended (uint16, skipped - the value survives in the HrRaw payload),
+    then 0..n RR values (uint16 LE, unit 1/1024 s).
+
+    `contact` is True/False only when the device advertises support for the
+    sensor contact feature, otherwise None. Per BLE spec the "detected" bit is
+    meaningless unless the "supported" bit is set, so the two must be read
+    together - a naive check of the detected bit alone would report "no contact"
+    for every device that simply does not implement the feature (EW-86).
     """
     if not data:
-        return 0, []
+        return 0, [], None
     flags = data[0]
     idx = 1
     if flags & _FLAG_HR_16BIT:
@@ -56,7 +64,10 @@ def parse_hr_measurement(data: bytes) -> tuple[int, list[float]]:
             raw = int.from_bytes(data[idx:idx + 2], "little")
             rr_intervals.append(raw / 1024.0 * 1000.0)
             idx += 2
-    return hr, rr_intervals
+    contact: Optional[bool] = None
+    if flags & _FLAG_CONTACT_SUPPORTED:
+        contact = bool(flags & _FLAG_CONTACT_DETECTED)
+    return hr, rr_intervals, contact
 
 
 class H10Source:
@@ -80,9 +91,11 @@ class H10Source:
 
         def on_notify(payload: bytes) -> None:
             # Runs in the BLE callback; timestamp = arrival time, emit is non-blocking.
-            hr, rr_list = parse_hr_measurement(payload)
+            hr, rr_list, contact = parse_hr_measurement(payload)
             mono, utc = clock.now()
-            emit(HrSample(mono_ns=mono, utc=utc, hr_bpm=hr))
+            # Raw first: if parsing ever proves wrong, the payload is still there.
+            emit(HrRaw(mono_ns=mono, utc=utc, payload=bytes(payload)))
+            emit(HrSample(mono_ns=mono, utc=utc, hr_bpm=hr, contact=contact))
             for rr_ms in rr_list:
                 emit(RrInterval(mono_ns=mono, utc=utc, rr_ms=rr_ms))
 

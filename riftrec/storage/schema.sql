@@ -90,6 +90,26 @@ CREATE TABLE IF NOT EXISTS game_snapshot (
     level       INTEGER
 );
 
+-- Identity and state of each sensor per session. Lets a recording be traced
+-- back to the physical strap - essential once straps rotate between
+-- participants - and records the firmware, because Polar changed BLE
+-- behaviour within the 4.x line. Battery is captured per session since a weak
+-- cell is a plausible confounder for signal quality.
+CREATE TABLE IF NOT EXISTS device_info (
+    session_id   TEXT NOT NULL REFERENCES session(session_id),
+    source       TEXT NOT NULL,      -- 'h10'
+    utc          TEXT NOT NULL,      -- when it was read
+    address      TEXT,
+    name         TEXT,
+    manufacturer TEXT,
+    model        TEXT,
+    serial       TEXT,               -- identifies the individual strap
+    hardware_rev TEXT,
+    firmware_rev TEXT,
+    software_rev TEXT,               -- the number Polar's release notes use
+    battery_pct  INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS gap (
     session_id TEXT    NOT NULL REFERENCES session(session_id),
     source     TEXT    NOT NULL,        -- 'h10' | 'riot'

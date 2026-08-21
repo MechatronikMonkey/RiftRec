@@ -19,11 +19,54 @@ from typing import Optional
 
 from ..clock import SessionClock
 from ..hal.ble import BleTransport
-from ..model import HrRaw, HrSample, RrInterval
+from ..model import DeviceInfo, HrRaw, HrSample, RrInterval
 from .base import EmitFn
 
 # Standard BLE Heart Rate Measurement characteristic.
 HR_MEASUREMENT_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
+
+# Device Information Service + Battery Service. Open standard services, no
+# pairing required - the same category as the HR service, unlike PMD.
+_DIS_CHARS = {
+    "manufacturer": "00002a29-0000-1000-8000-00805f9b34fb",
+    "model": "00002a24-0000-1000-8000-00805f9b34fb",
+    "serial": "00002a25-0000-1000-8000-00805f9b34fb",
+    "hardware_rev": "00002a27-0000-1000-8000-00805f9b34fb",
+    "firmware_rev": "00002a26-0000-1000-8000-00805f9b34fb",
+    "software_rev": "00002a28-0000-1000-8000-00805f9b34fb",
+}
+BATTERY_LEVEL_UUID = "00002a19-0000-1000-8000-00805f9b34fb"
+
+
+async def read_device_info(transport: BleTransport, utc: str) -> DeviceInfo:
+    """Read identity and battery level of the connected sensor.
+
+    Every read is guarded individually: a sensor that does not expose a
+    characteristic, or a transport that fails on it, must never prevent a
+    recording from starting. Missing values stay None.
+    """
+    info = DeviceInfo(
+        source="h10",
+        utc=utc,
+        address=getattr(transport, "address", None),
+        name=getattr(transport, "name", None),
+    )
+    for field, uuid in _DIS_CHARS.items():
+        try:
+            raw = await transport.read(uuid)
+        except Exception:
+            continue
+        try:
+            setattr(info, field, raw.decode("utf-8").strip("\x00").strip())
+        except UnicodeDecodeError:
+            setattr(info, field, raw.hex())
+    try:
+        battery = await transport.read(BATTERY_LEVEL_UUID)
+        if battery:
+            info.battery_pct = battery[0]
+    except Exception:
+        pass
+    return info
 
 # Flags byte (first byte of the payload)
 _FLAG_HR_16BIT = 0x01           # HR as uint16 instead of uint8
@@ -88,6 +131,11 @@ class H10Source:
 
     async def run(self, emit: EmitFn, clock: SessionClock) -> None:
         await self._transport.connect(self._device)
+
+        # Which strap produced this recording, on which firmware, at what
+        # battery level - recorded before the first sample arrives.
+        _, utc = clock.now()
+        emit(await read_device_info(self._transport, utc))
 
         def on_notify(payload: bytes) -> None:
             # Runs in the BLE callback; timestamp = arrival time, emit is non-blocking.

@@ -17,6 +17,7 @@ import asyncio
 import json
 import time
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -24,8 +25,10 @@ from .. import SCHEMA_VERSION, __version__
 from ..clock import SessionClock
 from ..config import RecorderConfig
 from ..hal.ble import BleTransport
-from ..model import Gap, GameEvent, GameRaw, HrRaw, HrSample, RrInterval, SessionMeta
-from ..sources.h10 import HR_MEASUREMENT_UUID, parse_hr_measurement
+from ..model import (
+    DeviceInfo, Gap, GameEvent, GameRaw, HrRaw, HrSample, RrInterval, SessionMeta,
+)
+from ..sources.h10 import HR_MEASUREMENT_UUID, parse_hr_measurement, read_device_info
 from ..sources.riot import (
     DEFAULT_BASE_URL,
     active_riot_id,
@@ -75,6 +78,10 @@ class SupervisorService:
         # the start_utc of an ongoing outage (None while healthy / never up yet).
         self._h10_up = False
         self._h10_gap_start: Optional[str] = None
+        # Identity of the connected strap, read once per BLE connect. One link
+        # spans several matches, so it is cached here and written into every
+        # session that opens under it (EW-86).
+        self._device_info: Optional[DeviceInfo] = None
 
     # -- per-match session management (synchronous, unit-testable) --------
 
@@ -95,8 +102,24 @@ class SupervisorService:
             notes=self._config.notes,
         ))
         self._current = _Session(sink, clock, session_id)
+        self._write_device_info()
         self.status.set(RecorderState.RECORDING)
         return session_id
+
+    def _write_device_info(self) -> None:
+        """Record which strap is producing this session, if both are known.
+
+        Called from two directions because either can come first: a match may
+        start before the strap connects, or the strap may already be connected
+        when the match starts. Writing on a later reconnect too is intentional -
+        each row is timestamped, so repeated rows document the battery level
+        over the course of a long session.
+        """
+        cur, info = self._current, self._device_info
+        if cur is None or info is None:
+            return
+        _, utc = cur.clock.now()
+        cur.sink.write(replace(info, utc=utc))
 
     def _on_hr(self, payload: bytes) -> None:
         """H10 notify callback. Between matches (no session) HR is discarded."""
@@ -226,6 +249,16 @@ class SupervisorService:
                   f"{self._config.reconnect_backoff_s}s")
             await asyncio.sleep(self._config.reconnect_backoff_s)
             return
+
+        # Read identity/battery once per link, then attach it to the running
+        # session (or to the next one that opens).
+        try:
+            self._device_info = await read_device_info(
+                transport, datetime.now(timezone.utc).isoformat()
+            )
+            self._write_device_info()
+        except Exception as exc:  # never let this stop a recording
+            print(f"[warn] could not read device info: {exc}")
 
         print("[info] H10 connected")
         self._mark_h10_up()

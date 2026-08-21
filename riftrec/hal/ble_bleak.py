@@ -62,6 +62,10 @@ class BleakTransport:
         assert self._client is not None, "call connect() first"
         await self._client.write_gatt_char(char_uuid, data, response=response)
 
+    async def read(self, char_uuid: str) -> bytes:
+        assert self._client is not None, "call connect() first"
+        return bytes(await self._client.read_gatt_char(char_uuid))
+
     async def disconnect(self) -> None:
         if self._client is not None and self._client.is_connected:
             await self._client.disconnect()

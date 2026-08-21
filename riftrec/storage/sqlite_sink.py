@@ -14,7 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..model import (
-    Gap, GameEvent, GameRaw, GameSnapshot, HrRaw, HrSample, Record, RrInterval, SessionMeta,
+    DeviceInfo, Gap, GameEvent, GameRaw, GameSnapshot, HrRaw, HrSample, Record,
+    RrInterval, SessionMeta,
 )
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
@@ -76,6 +77,7 @@ class SqliteSink:
             "game_snapshot": [],
             "hr_raw": [],
             "game_raw": [],
+            "device_info": [],
         }
 
     # -- Lifecycle ---------------------------------------------------------
@@ -117,6 +119,13 @@ class SqliteSink:
             self._buf["hr_sample"].append(
                 (sid, record.mono_ns, record.utc, record.hr_bpm, contact)
             )
+        elif isinstance(record, DeviceInfo):
+            self._buf["device_info"].append((
+                sid, record.source, record.utc, record.address, record.name,
+                record.manufacturer, record.model, record.serial,
+                record.hardware_rev, record.firmware_rev, record.software_rev,
+                record.battery_pct,
+            ))
         elif isinstance(record, HrRaw):
             self._buf["hr_raw"].append((sid, record.mono_ns, record.utc, record.payload))
         elif isinstance(record, GameRaw):

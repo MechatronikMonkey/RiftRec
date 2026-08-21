@@ -196,6 +196,13 @@ So: **a window is trustworthy only if RR intervals are present throughout it.** 
 a valid but late signal, and a bit-for-bit constant `hr_bpm` over several seconds is a useful
 cross-check. Note that an artefact-correction rate will *not* catch this — a frozen stretch
 contains no correctable beats at all.
+* **`device_info`** — identity and state of the sensor, written once per session:
+  serial number, hardware/firmware/software revision, BLE address and battery
+  level. With straps rotating between participants this is the only way to trace
+  a recording back to a physical unit, and the firmware version matters because
+  Polar changed BLE behaviour within the 4.x line. Battery is captured per
+  session because a weak cell is a plausible confounder for signal quality.
+  Every field is optional — a failed read never aborts a recording.
 * **`game_raw`** — the complete `allgamedata` response as zlib-compressed JSON, stored on the
   first poll, then every `raw_interval_s` (default 30 s), plus the final frame before
   `GameEnd`. Holds everything the parsed tables drop: champion, position, team, items, runes,

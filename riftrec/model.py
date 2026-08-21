@@ -112,6 +112,33 @@ class GameRaw:
 
 
 @dataclass(slots=True)
+class DeviceInfo:
+    """Identity and state of a sensor at the start of a session (EW-86).
+
+    Written once per session so a recording can always be traced back to the
+    physical device that produced it. With straps rotating between participants
+    that is the only way to find a unit that systematically underperforms, and
+    the firmware version matters because Polar changed BLE behaviour inside the
+    4.x line. `battery_pct` is read per session because a weak cell is a
+    plausible confounder for signal quality.
+
+    Every field is optional: a failed read must never abort a recording.
+    """
+
+    source: str
+    utc: str
+    address: Optional[str] = None
+    name: Optional[str] = None
+    manufacturer: Optional[str] = None
+    model: Optional[str] = None
+    serial: Optional[str] = None
+    hardware_rev: Optional[str] = None
+    firmware_rev: Optional[str] = None
+    software_rev: Optional[str] = None
+    battery_pct: Optional[int] = None
+
+
+@dataclass(slots=True)
 class Gap:
     """Marker for a connection gap of a source (EW-39).
 

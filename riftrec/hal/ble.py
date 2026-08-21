@@ -36,4 +36,10 @@ class BleTransport(Protocol):
         """Write bytes to a characteristic (PMD control point)."""
         ...
 
+    async def read(self, char_uuid: str) -> bytes:
+        """Read a characteristic once. Used for the Device Information Service
+        (serial, firmware) and the battery level, which are recorded per
+        session so a recording can be traced back to a specific strap."""
+        ...
+
     async def disconnect(self) -> None: ...

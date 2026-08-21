@@ -28,8 +28,15 @@ CREATE TABLE IF NOT EXISTS hr_sample (
     utc        TEXT    NOT NULL,
     hr_bpm     INTEGER NOT NULL,
     contact    INTEGER              -- BLE sensor contact: 1 = skin contact, 0 = none,
-                                     -- NULL = device does not report it. Independent
-                                     -- discard criterion for HRV windows (EW-86).
+                                     -- NULL = device does not report it.
+                                     -- NOTE: the Polar H10 does NOT report it (verified
+                                     -- 21.08.2026, flags byte 0x10 - contact-supported bit
+                                     -- never set), so this stays NULL with our hardware.
+                                     -- Kept spec-compliant for other devices. To detect
+                                     -- contact loss use the RR channel instead: RR
+                                     -- intervals stop arriving ~10 s before hr_bpm drops
+                                     -- to 0, and in between the H10 emits a FROZEN but
+                                     -- plausible HR value. See the note in README.
 );
 
 -- Unparsed HR notification payloads. Keeps a parser bug recoverable and

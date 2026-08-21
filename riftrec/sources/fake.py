@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+from typing import Optional
 
 from ..clock import SessionClock
 from ..model import GameEvent, GameRaw, HrRaw, HrSample, RrInterval
@@ -32,11 +33,18 @@ _OWN_NAME = "TestSubject"
 _FOE_NAME = "TestOpponent"
 
 
-def _hr_payload(hr: int, rr_ms: float, contact: bool) -> bytes:
-    """Build a spec-shaped 0x2A37 notification: contact supported + RR present."""
-    flags = 0x10 | 0x04 | (0x02 if contact else 0x00)
+def _hr_payload(hr: int, rr_ms: Optional[float]) -> bytes:
+    """Build a 0x2A37 notification shaped like the ones a real Polar H10 sends.
+
+    Measured 21.08.2026: the H10 sets flags `0x10` (RR present) and does **not**
+    advertise sensor contact support. When contact degrades it drops the RR bit,
+    so the payload becomes `0x00` plus a frozen HR value. Reproducing that here
+    keeps synthetic files honest - see the contact-loss note in the README.
+    """
+    if rr_ms is None:
+        return bytes([0x00, hr & 0xFF])
     rr_units = int(round(rr_ms * 1024.0 / 1000.0))
-    return bytes([flags, hr & 0xFF, rr_units & 0xFF, (rr_units >> 8) & 0xFF])
+    return bytes([0x10, hr & 0xFF, rr_units & 0xFF, (rr_units >> 8) & 0xFF])
 
 
 def _game_frame(tick: int, hr: int) -> dict:
@@ -66,24 +74,42 @@ def _game_frame(tick: int, hr: int) -> dict:
 class FakeSource:
     name = "fake"
 
-    def __init__(self, ticks: int = 10, tick_s: float = 1.0, raw_every: int = 5) -> None:
+    def __init__(
+        self,
+        ticks: int = 10,
+        tick_s: float = 1.0,
+        raw_every: int = 5,
+        dropout: tuple[int, ...] = (6, 7),
+    ) -> None:
         self._ticks = ticks
         self._tick_s = tick_s
         self._raw_every = raw_every
+        # Ticks during which contact is lost (RR stops, HR freezes).
+        self._dropout = set(dropout)
 
     async def run(self, emit: EmitFn, clock: SessionClock) -> None:
         pseudonyms: dict[str, str] = {}
+        frozen_hr: Optional[int] = None
         for i in range(self._ticks):
             mono, utc = clock.now()
             # HR oscillates around 78 bpm, with a bump around the events.
             hr = 78 + int(12 * math.sin(i / 2.0))
-            rr_ms = 60000.0 / hr
-            # Drop skin contact for one tick so the discard criterion has
-            # something to find in a synthetic file.
-            contact = i != 7
-            emit(HrRaw(mono_ns=mono, utc=utc, payload=_hr_payload(hr, rr_ms, contact)))
-            emit(HrSample(mono_ns=mono, utc=utc, hr_bpm=hr, contact=contact))
-            emit(RrInterval(mono_ns=mono, utc=utc, rr_ms=rr_ms))
+            # Reproduce a real contact dropout for the ticks in `dropout`: RR
+            # stops and the HR value freezes at its last measured level, exactly
+            # as the H10 behaves. A synthetic file that only ever contains clean
+            # data would let an analysis pass that cannot survive real input.
+            in_dropout = i in self._dropout
+            if in_dropout:
+                frozen_hr = hr if frozen_hr is None else frozen_hr
+                hr, rr_ms = frozen_hr, None
+            else:
+                frozen_hr = None
+                rr_ms = 60000.0 / hr
+            emit(HrRaw(mono_ns=mono, utc=utc, payload=_hr_payload(hr, rr_ms)))
+            # contact stays None: the H10 does not report it (verified 21.08.2026)
+            emit(HrSample(mono_ns=mono, utc=utc, hr_bpm=hr, contact=None))
+            if rr_ms is not None:
+                emit(RrInterval(mono_ns=mono, utc=utc, rr_ms=rr_ms))
 
             frame = _game_frame(i, hr)
             if not pseudonyms:

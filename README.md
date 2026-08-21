@@ -170,8 +170,32 @@ so that an analysis nobody thought of today is still possible later:
 * **`hr_sample.contact`** — BLE sensor contact status: `1` skin contact, `0` none, `NULL` when
   the device does not report it. Per BLE spec the "detected" bit is only meaningful together
   with the "supported" bit; both are read together, so a device without the feature yields
-  `NULL` rather than a fake "no contact". This is the independent criterion for discarding an
-  HRV window that an artefact-correction rate alone cannot give.
+  `NULL` rather than a fake "no contact".
+
+#### Detecting contact loss on the Polar H10
+
+**The H10 does not report contact status** — verified 21.08.2026, flags byte `0x10`, the
+contact-supported bit is never set. `contact` therefore stays `NULL` with our hardware. The
+column is kept because it is spec-compliant and other devices do populate it.
+
+Use the **RR channel** instead. A measured 120 s recording with the strap disturbed and then
+removed shows a three-stage failure:
+
+| Phase | Flags | `hr_bpm` | RR |
+|---|---|---|---|
+| contact | `0x10` | varies (67–71) | present |
+| disturbed / lost | `0x00` | **frozen at last value** | none |
+| strap off | `0x00` | `0` | none |
+
+The middle phase is the trap: for ~10 seconds the device keeps emitting a **plausible but
+frozen** heart rate that is indistinguishable from a real measurement in the `hr_sample` series
+alone. A brief disturbance is enough to trigger it — the strap does not have to come off, which
+is exactly the failure mode a multi-hour unattended session will produce.
+
+So: **a window is trustworthy only if RR intervals are present throughout it.** `hr_bpm = 0` is
+a valid but late signal, and a bit-for-bit constant `hr_bpm` over several seconds is a useful
+cross-check. Note that an artefact-correction rate will *not* catch this — a frozen stretch
+contains no correctable beats at all.
 * **`game_raw`** — the complete `allgamedata` response as zlib-compressed JSON, stored on the
   first poll, then every `raw_interval_s` (default 30 s), plus the final frame before
   `GameEnd`. Holds everything the parsed tables drop: champion, position, team, items, runes,

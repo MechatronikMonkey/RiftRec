@@ -57,13 +57,25 @@ def test_pipe() -> None:
             assert ended_utc is not None, "session was not closed"
             assert isinstance(mono_anchor, int)
 
-            # Sample counts: 10 ticks -> 10 HR + 10 RR; events at ticks 3,6,8 -> 3
+            # 10 ticks -> 10 HR samples. RR is lower because FakeSource
+            # reproduces a real contact dropout on ticks 6 and 7: RR stops while
+            # HR keeps arriving frozen, exactly as the Polar H10 behaves
+            # (measured 21.08.2026). Events at ticks 3, 6, 8 -> 3.
             (hr_count,) = conn.execute("SELECT COUNT(*) FROM hr_sample").fetchone()
             (rr_count,) = conn.execute("SELECT COUNT(*) FROM rr_interval").fetchone()
             (ev_count,) = conn.execute("SELECT COUNT(*) FROM game_event").fetchone()
             assert hr_count == 10, hr_count
-            assert rr_count == 10, rr_count
+            assert rr_count == 8, rr_count
             assert ev_count == 3, ev_count
+
+            # The dropout must be recognisable the way the analysis will find it:
+            # HR present, RR absent. This is the case an artefact rate cannot
+            # catch, so it has to stay reproducible in synthetic data.
+            (gap_samples,) = conn.execute(
+                "SELECT COUNT(*) FROM hr_sample h WHERE NOT EXISTS ("
+                "  SELECT 1 FROM rr_interval r WHERE r.mono_ns = h.mono_ns)"
+            ).fetchone()
+            assert gap_samples == 2, gap_samples
 
             # Join over the shared session id must work (the "merge")
             (joined,) = conn.execute(

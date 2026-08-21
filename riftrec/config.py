@@ -50,3 +50,8 @@ class RecorderConfig:
     # reconnect attempts. bleak does not reconnect on its own; the supervisor
     # detects the drop, logs a gap, and re-establishes the link (EW-42).
     reconnect_backoff_s: float = 3.0
+
+    # How often the strap's battery level is re-read while the link is up. A
+    # BLE link can stay connected for hours, so a value read only at connect
+    # time would be stale exactly when a participant needs the warning.
+    battery_poll_s: float = 900.0  # 15 minutes

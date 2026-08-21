@@ -66,3 +66,35 @@ if __name__ == "__main__":
             fn()
             print(f"OK - {name}")
     print("OK - all state tests passed")
+
+
+# -- Battery display (EW-86 follow-up) -------------------------------------
+
+
+def test_observable_carries_non_enum_values() -> None:
+    """The battery level rides on the same mechanism as the recorder state.
+
+    Uses equality rather than identity: percentages outside CPython's small-int
+    cache would otherwise never compare equal and would re-notify endlessly.
+    """
+    from riftrec.rte.state import Observable
+
+    seen: list = []
+    obs = Observable(None)
+    obs.subscribe(seen.append)
+    obs.set(87)
+    obs.set(87)          # unchanged -> no second notification
+    obs.set(1000)
+    obs.set(1000)
+    obs.set(None)
+    assert seen == [87, 1000, None]
+
+
+def test_battery_text_wording() -> None:
+    from riftrec.app.tray_icons import BATTERY_WARN_PCT, battery_text
+
+    assert battery_text(None) == "Battery: unknown"
+    assert battery_text(87) == "Battery: 87%"
+    assert "replace soon" in battery_text(BATTERY_WARN_PCT)
+    assert "replace soon" in battery_text(5)
+    assert "replace soon" not in battery_text(BATTERY_WARN_PCT + 1)

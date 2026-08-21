@@ -8,7 +8,7 @@ the front-end-free truth; a UI attaches via a callback.
 from __future__ import annotations
 
 import enum
-from typing import Callable
+from typing import Any, Callable
 
 
 class RecorderState(enum.Enum):
@@ -20,25 +20,32 @@ class RecorderState(enum.Enum):
     ERROR = "error"
 
 
-StateListener = Callable[[RecorderState], None]
+StateListener = Callable[[Any], None]
 
 
 class Observable:
-    """Minimal state holder with listener notification."""
+    """Minimal state holder with listener notification.
 
-    def __init__(self, initial: RecorderState = RecorderState.IDLE) -> None:
+    Deliberately untyped in what it carries: besides the recorder state it also
+    carries the strap's battery level, so the tray can show both without a
+    second mechanism.
+    """
+
+    def __init__(self, initial: Any = RecorderState.IDLE) -> None:
         self._state = initial
         self._listeners: list[StateListener] = []
 
     @property
-    def state(self) -> RecorderState:
+    def state(self) -> Any:
         return self._state
 
     def subscribe(self, listener: StateListener) -> None:
         self._listeners.append(listener)
 
-    def set(self, state: RecorderState) -> None:
-        if state is self._state:
+    def set(self, state: Any) -> None:
+        # Equality rather than identity: enums compare the same either way, but
+        # a battery percentage would not be reliably identical.
+        if state == self._state:
             return
         self._state = state
         for listener in self._listeners:

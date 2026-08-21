@@ -82,6 +82,10 @@ class SupervisorService:
         # spans several matches, so it is cached here and written into every
         # session that opens under it (EW-86).
         self._device_info: Optional[DeviceInfo] = None
+        # Battery level of the strap, surfaced to the tray so a participant can
+        # replace the cell before it dies mid-study rather than after.
+        self.battery = Observable(None)
+        self._battery_checked_mono = 0.0
 
     # -- per-match session management (synchronous, unit-testable) --------
 
@@ -225,6 +229,16 @@ class SupervisorService:
             if not self._h10_up:
                 print("[info] H10 connected")
                 self._mark_h10_up()
+            # Periodic battery refresh while the link stays up.
+            if (
+                time.monotonic() - self._battery_checked_mono
+                >= self._config.battery_poll_s
+            ):
+                try:
+                    await self._refresh_device_info(transport)
+                except Exception as exc:
+                    print(f"[warn] battery read failed: {exc}")
+                    self._battery_checked_mono = time.monotonic()  # don't hammer
             return
 
         if self._h10_up:  # up -> down: a real mid-session drop
@@ -253,15 +267,28 @@ class SupervisorService:
         # Read identity/battery once per link, then attach it to the running
         # session (or to the next one that opens).
         try:
-            self._device_info = await read_device_info(
-                transport, datetime.now(timezone.utc).isoformat()
-            )
-            self._write_device_info()
+            await self._refresh_device_info(transport)
         except Exception as exc:  # never let this stop a recording
             print(f"[warn] could not read device info: {exc}")
 
         print("[info] H10 connected")
         self._mark_h10_up()
+
+    async def _refresh_device_info(self, transport: BleTransport) -> None:
+        """Re-read identity and battery, publish the level, and record it.
+
+        Called on every connect and periodically afterwards: one BLE link can
+        stay up for hours, so a value read only at connect time would be stale
+        exactly when a participant needs the warning. Each refresh also writes a
+        timestamped device_info row, which gives a battery curve over long
+        sessions for free.
+        """
+        self._device_info = await read_device_info(
+            transport, datetime.now(timezone.utc).isoformat()
+        )
+        self.battery.set(self._device_info.battery_pct)
+        self._battery_checked_mono = time.monotonic()
+        self._write_device_info()
 
     def add_note(self, text: str) -> bool:
         """Attach a note to the current session, or the last one between matches.

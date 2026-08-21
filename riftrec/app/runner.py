@@ -25,6 +25,7 @@ def run_gui() -> None:
     service = SupervisorService(config)
     tray = TrayController(service.status)
     tray.set_on_note(service.add_note)
+    service.battery.subscribe(tray.set_battery)
 
     loop = asyncio.new_event_loop()
     holder: dict[str, asyncio.Event] = {}

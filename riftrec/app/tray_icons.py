@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
 from ..rte.state import RecorderState
 
 _COLORS: dict[RecorderState, str] = {
@@ -29,6 +31,21 @@ def color_for(state: RecorderState) -> str:
 
 def title_for(state: RecorderState) -> str:
     return _TITLES.get(state, "RiftRec")
+
+
+# Below this the participant should change the coin cell. Set generously: the
+# point is to replace it during a quiet moment, not to squeeze out the last
+# percent and lose a session to a dead strap mid-match.
+BATTERY_WARN_PCT = 30
+
+
+def battery_text(pct: Optional[int]) -> str:
+    """Menu/tooltip wording for the strap's battery level."""
+    if pct is None:
+        return "Battery: unknown"
+    if pct <= BATTERY_WARN_PCT:
+        return f"Battery: {pct}% - replace soon"
+    return f"Battery: {pct}%"
 
 
 def make_icon(state: RecorderState, size: int = 64):

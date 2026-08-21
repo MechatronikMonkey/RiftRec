@@ -24,12 +24,24 @@ class _FakeTransport:
     """No-op BLE transport so run() can be driven without hardware."""
 
     is_connected = True
+    address = "FA:KE:00:00:00:00"
+    name = "Polar H10 FAKE"
+
+    def __init__(self, battery: int = 87) -> None:
+        self._battery = battery
 
     async def connect(self, device) -> None:
         pass
 
     async def subscribe(self, uuid, callback) -> None:
         self.callback = callback
+
+    async def read(self, uuid: str) -> bytes:
+        if uuid.startswith("00002a19"):        # battery level
+            return bytes([self._battery])
+        if uuid.startswith("00002a25"):        # serial number
+            return b"FAKESERIAL"
+        raise RuntimeError("characteristic not available")
 
     async def disconnect(self) -> None:
         pass
@@ -254,3 +266,41 @@ if __name__ == "__main__":
             fn()
             print(f"OK - {name}")
     print("OK - all supervisor tests passed")
+
+
+# -- Battery level surfaced to the UI (EW-86 follow-up) --------------------
+
+
+def test_refresh_device_info_publishes_battery_and_records_it(tmp_path) -> None:
+    """The tray reads this observable; a session must also keep the value."""
+    import asyncio
+
+    db = tmp_path / "battery.sqlite"
+    svc = SupervisorService(RecorderConfig(db_path=db), transport=_FakeTransport(battery=42))
+    svc._open_session()
+    asyncio.run(svc._refresh_device_info(_FakeTransport(battery=42)))
+    svc._close_session()
+
+    assert svc.battery.state == 42
+
+    con = sqlite3.connect(db)
+    serial, battery = con.execute(
+        "SELECT serial, battery_pct FROM device_info ORDER BY utc DESC LIMIT 1"
+    ).fetchone()
+    assert (serial, battery) == ("FAKESERIAL", 42)
+
+
+def test_battery_unknown_when_sensor_will_not_say(tmp_path) -> None:
+    """A strap that refuses the read must not break recording - just no value."""
+    import asyncio
+
+    class _Mute(_FakeTransport):
+        async def read(self, uuid: str) -> bytes:
+            raise RuntimeError("nope")
+
+    svc = SupervisorService(
+        RecorderConfig(db_path=tmp_path / "mute.sqlite"), transport=_Mute()
+    )
+    svc._open_session()
+    asyncio.run(svc._refresh_device_info(_Mute()))
+    assert svc.battery.state is None

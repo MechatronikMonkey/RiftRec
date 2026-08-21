@@ -78,6 +78,12 @@ icons (1); the RiftRec icon turns **green** once the H10 is connected and ready 
 **red** while a match is being recorded. **Right-click** the icon to *add a note* or to *stop
 and exit*. Just play — matches are detected and recorded automatically.
 
+**Watch the battery.** Hovering the tray icon, and the first line of the right-click menu,
+show the strap's remaining battery — e.g. `Battery: 74%`. Below 30% it reads
+**"replace soon"**. Change the coin cell (CR2025) at that point rather than running it to
+zero: a strap that dies mid-match costs the whole session. The value refreshes about every
+15 minutes while the strap is connected.
+
 ## Troubleshooting
 
 - **Tray icon stays amber (connecting):** the strap must be worn with moistened electrodes.

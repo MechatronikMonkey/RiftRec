@@ -17,7 +17,7 @@ from typing import Callable, Optional
 import pystray
 
 from ..rte.state import Observable, RecorderState
-from .tray_icons import make_icon, title_for
+from .tray_icons import battery_text, make_icon, title_for
 
 
 def _prompt_note() -> Optional[str]:
@@ -42,12 +42,14 @@ class TrayController:
         self._current = status.state
         self._on_quit: Optional[Callable[[], None]] = None
         self._on_note: Optional[Callable[[str], None]] = None
+        self._battery: Optional[int] = None
         self._icon = pystray.Icon(
             "riftrec",
             make_icon(self._current),
-            title_for(self._current),
+            self._tooltip(),
             menu=pystray.Menu(
                 pystray.MenuItem(lambda item: title_for(self._current), self._noop, enabled=False),
+                pystray.MenuItem(lambda item: battery_text(self._battery), self._noop, enabled=False),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Add note…", self._add_note),
                 pystray.MenuItem("Stop and exit", self._quit),
@@ -66,11 +68,25 @@ class TrayController:
     def _noop(self, icon=None, item=None) -> None:
         pass
 
+    def _tooltip(self) -> str:
+        """Hover text: recorder state plus battery, so a glance suffices."""
+        label = title_for(self._current)
+        return label if self._battery is None else f"{label} - {battery_text(self._battery)}"
+
+    def set_battery(self, pct: Optional[int]) -> None:
+        """Show the strap's battery level (called from the supervisor thread)."""
+        self._battery = pct
+        try:
+            self._icon.title = self._tooltip()
+            self._icon.update_menu()
+        except Exception:
+            pass  # tray not up yet, or already torn down
+
     def _on_state(self, state: RecorderState) -> None:
         self._current = state
         try:
             self._icon.icon = make_icon(state)
-            self._icon.title = title_for(state)
+            self._icon.title = self._tooltip()
             self._icon.update_menu()
         except Exception:
             pass

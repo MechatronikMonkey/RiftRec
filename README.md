@@ -258,3 +258,17 @@ the result back via `root.after(...)`.
   - `h10_ping.py` — connects, pulls a few HR/RR + ECG + ACC frames, measures inter-arrival timing
   - `h10_simpleble_probe.py` — cross-check of the PMD bug with SimpleBLE
   - `h10_bumble_probe.py` — talk to the H10 through Google's Bumble user-space stack (needs a USB dongle)
+
+---
+
+## Licence
+
+MIT — see [LICENSE](LICENSE). Use it, change it, build on it; keep the copyright
+notice.
+
+The licence covers the **software only**. Session recordings are never part of
+this repository (`*.sqlite` is gitignored) and are not covered — they are
+Art. 9 GDPR health data belonging to the study participants.
+
+Dependencies are permissively licensed: bleak (MIT), httpx (BSD), pystray
+(LGPL, used unmodified as a library), pillow (MIT-CMU).

@@ -65,6 +65,12 @@ class GameSnapshot:
 
     Provides trend quantities (KDA/CS/gold/level) for game-phase analyses that
     the discrete events alone cannot express.
+
+    `is_dead` and `respawn_timer_s` are here rather than only in `game_raw`
+    because the pre-registered analysis needs the respawn timer *at the moment
+    of death* (EW-61: events count only when the player stays dead for the whole
+    measurement window). The raw channel samples every 30 s and misses most
+    death timers entirely; this table runs every 5 s and catches them.
     """
 
     mono_ns: int
@@ -76,6 +82,8 @@ class GameSnapshot:
     cs: Optional[int]
     gold: Optional[float]
     level: Optional[int]
+    is_dead: Optional[bool] = None
+    respawn_timer_s: Optional[float] = None
 
 
 @dataclass(slots=True)

@@ -12,7 +12,9 @@ __version__ = "0.1.0"
 # Version of the SQLite session schema (= contract between RiftRec and RiftLab).
 # Increment on every incompatible schema change.
 #
+# 4 (EW-61): game_snapshot.is_dead / respawn_timer_s - the death timer at 5 s
+#            resolution, which the 30 s raw cadence cannot deliver.
 # 3 (EW-86): device_info table - which strap, which firmware, what battery.
 # 2 (EW-86): raw channels `hr_raw` and `game_raw` plus `hr_sample.contact`.
 #            Additive only - RiftLab keeps reading version 1 files unchanged.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4

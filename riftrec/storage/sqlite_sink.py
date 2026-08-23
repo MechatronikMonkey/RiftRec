@@ -98,6 +98,12 @@ class SqliteSink:
         hr_cols = {row[1] for row in conn.execute("PRAGMA table_info(hr_sample)")}
         if "contact" not in hr_cols:
             conn.execute("ALTER TABLE hr_sample ADD COLUMN contact INTEGER")
+        # Schema version 4: death state on the snapshot table (EW-61).
+        snap_cols = {row[1] for row in conn.execute("PRAGMA table_info(game_snapshot)")}
+        if "is_dead" not in snap_cols:
+            conn.execute("ALTER TABLE game_snapshot ADD COLUMN is_dead INTEGER")
+        if "respawn_timer_s" not in snap_cols:
+            conn.execute("ALTER TABLE game_snapshot ADD COLUMN respawn_timer_s REAL")
         conn.execute(
             "INSERT INTO session (session_id, participant_id, session_index, "
             "started_utc, ended_utc, mono_anchor_ns, app_version, schema_version, notes) "
@@ -144,6 +150,8 @@ class SqliteSink:
                 sid, record.mono_ns, record.utc, record.game_time_s,
                 record.kills, record.deaths, record.assists,
                 record.cs, record.gold, record.level,
+                None if record.is_dead is None else int(record.is_dead),
+                record.respawn_timer_s,
             ))
         else:  # pragma: no cover - guard against accidentally new record types
             raise TypeError(f"Unknown record type: {type(record).__name__}")

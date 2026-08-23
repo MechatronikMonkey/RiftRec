@@ -87,7 +87,12 @@ CREATE TABLE IF NOT EXISTS game_snapshot (
     assists     INTEGER,
     cs          INTEGER,
     gold        REAL,
-    level       INTEGER
+    level       INTEGER,
+    is_dead     INTEGER,          -- 1 while the player is waiting to respawn
+    respawn_timer_s REAL          -- seconds left until respawn. Sampled here
+                                  -- (5 s) and not only in game_raw (30 s),
+                                  -- because EW-61 needs the timer at the moment
+                                  -- of death and timers run only 10-50 s.
 );
 
 -- Identity and state of each sensor per session. Lets a recording be traced

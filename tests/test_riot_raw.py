@@ -184,6 +184,36 @@ def test_event_payloads_are_pseudonymised() -> None:
     assert payload["VictimName"] == "Me"
 
 
+# -- Death timer at snapshot resolution (EW-61 / P1) -----------------------
+
+
+def test_snapshot_carries_death_state() -> None:
+    """The pre-registered analysis needs the respawn timer at the moment of
+    death. game_raw samples every 30 s and misses most timers (10-50 s), so the
+    value has to ride on the 5 s snapshot instead."""
+    from riftrec.sources.riot import extract_snapshot
+
+    data = _frame()
+    data["allPlayers"][0]["isDead"] = True
+    data["allPlayers"][0]["respawnTimer"] = 34.5
+    snap = extract_snapshot(data, mono_ns=1, utc="t")
+    assert snap.is_dead is True
+    assert snap.respawn_timer_s == 34.5
+
+
+def test_snapshot_death_state_absent_is_none() -> None:
+    """Fields missing from the API must not turn into False/0.0 - that would be
+    indistinguishable from 'alive with no timer' in the analysis."""
+    from riftrec.sources.riot import extract_snapshot
+
+    data = _frame()
+    data["allPlayers"][0].pop("isDead", None)
+    data["allPlayers"][0].pop("respawnTimer", None)
+    snap = extract_snapshot(data, mono_ns=1, utc="t")
+    assert snap.is_dead is None
+    assert snap.respawn_timer_s is None
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

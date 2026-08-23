@@ -160,6 +160,8 @@ def extract_snapshot(data: dict, mono_ns: int, utc: str) -> GameSnapshot:
     level = active.get("level")
     if level is None:
         level = row.get("level")
+    is_dead = row.get("isDead")
+    respawn = row.get("respawnTimer")
     return GameSnapshot(
         mono_ns=mono_ns,
         utc=utc,
@@ -170,6 +172,11 @@ def extract_snapshot(data: dict, mono_ns: int, utc: str) -> GameSnapshot:
         cs=scores.get("creepScore"),
         gold=active.get("currentGold"),
         level=level,
+        is_dead=bool(is_dead) if is_dead is not None else None,
+        # Sampled here at the snapshot interval rather than only in game_raw:
+        # death timers run 10-50 s, so the 30 s raw cadence misses most of them,
+        # and EW-61 needs the value at the moment of death.
+        respawn_timer_s=float(respawn) if respawn is not None else None,
     )
 
 

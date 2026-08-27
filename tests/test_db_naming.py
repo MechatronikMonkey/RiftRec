@@ -9,7 +9,9 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from riftrec.storage.sqlite_sink import unique_db_path
+from riftrec.storage.sqlite_sink import (
+    looks_like_cloud_folder, probe_folder_writable, unique_db_path,
+)
 
 
 def test_path_is_inside_folder_and_free() -> None:
@@ -59,3 +61,36 @@ if __name__ == "__main__":
             fn()
             print(f"OK - {name}")
     print("OK - all db-naming tests passed")
+
+
+# -- Is the folder usable at all? (EW-89) ----------------------------------
+
+
+def test_writable_folder_reports_no_problem(tmp_path) -> None:
+    assert probe_folder_writable(tmp_path / "recordings") is None
+    assert (tmp_path / "recordings").is_dir()
+
+
+def test_unusable_folder_is_reported_before_the_run_starts(tmp_path) -> None:
+    """Better here than 40 minutes in, with a ranked game in progress."""
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"")            # a file where a directory is needed
+    problem = probe_folder_writable(blocker / "recordings")
+    assert problem                       # a message, not a crash
+
+
+def test_the_probe_leaves_nothing_behind(tmp_path) -> None:
+    probe_folder_writable(tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_cloud_folders_are_recognised() -> None:
+    for path in (r"C:\Users\x\OneDrive\RiftRec", r"C:\Users\x\Dropbox\rec",
+                 "/home/x/Nextcloud/rec", r"D:\Google Drive\rec"):
+        assert looks_like_cloud_folder(path), path
+
+
+def test_ordinary_folders_are_not_flagged() -> None:
+    for path in (r"C:\Users\x\Documents\RiftRec", r"D:\Games\RiftRec",
+                 "/home/x/recordings"):
+        assert not looks_like_cloud_folder(path), path

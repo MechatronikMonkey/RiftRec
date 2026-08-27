@@ -32,6 +32,7 @@ def run_gui() -> None:
     service = SupervisorService(config)
     tray = TrayController(service.status, service.report)
     tray.set_on_note(service.add_note)
+    service.on_alert = tray.alert          # silent failures push, not wait (EW-89)
     tray.set_status_source(lambda: {
         "report": service.report.state,
         "battery": battery_text(service.battery.state),

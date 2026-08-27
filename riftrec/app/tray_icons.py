@@ -16,6 +16,7 @@ _COLORS: dict[RecorderState, str] = {
     RecorderState.CONNECTING: "#f5a623",   # amber
     RecorderState.READY: "#2ca02c",        # green - connected, waiting
     RecorderState.RECORDING: "#d62728",    # red - like a camera rec light
+    RecorderState.WARNING: "#e67e22",      # orange - drawn as a triangle below
     RecorderState.STOPPED: "#607d8b",      # slate
     RecorderState.ERROR: "#8e44ad",        # purple - distinct from rec-red
 }
@@ -41,11 +42,24 @@ def battery_text(pct: Optional[int]) -> str:
 
 
 def make_icon(state: RecorderState, size: int = 64):
-    """A filled status dot as a PIL image (transparent background)."""
+    """A status shape as a PIL image (transparent background).
+
+    WARNING is a triangle, every other state a dot. Shape rather than only
+    colour, because at 16 px in a crowded notification area two similar
+    colours are indistinguishable - and "recording, but the data is
+    useless" is the one state that must not look like the others (EW-89).
+    """
     from PIL import Image, ImageDraw
 
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     pad = size // 8
-    draw.ellipse([pad, pad, size - pad, size - pad], fill=color_for(state))
+    fill = color_for(state)
+    if state is RecorderState.WARNING:
+        draw.polygon(
+            [(size / 2, pad), (size - pad, size - pad), (pad, size - pad)],
+            fill=fill,
+        )
+    else:
+        draw.ellipse([pad, pad, size - pad, size - pad], fill=fill)
     return img

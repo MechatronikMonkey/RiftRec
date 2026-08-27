@@ -44,6 +44,41 @@ def unique_db_path(folder: str | Path, participant: str | None = None) -> Path:
     return candidate
 
 
+def probe_folder_writable(folder: str | Path) -> str | None:
+    """Return why `folder` cannot be recorded into, or None if it is fine.
+
+    Checked before a run starts rather than at the first match: a folder on
+    an external drive that is not plugged in, or a cloud folder the user is
+    signed out of, otherwise fails 40 minutes later with a match in progress.
+    """
+    path = Path(folder)
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / ".riftrec-write-test"
+        probe.write_bytes(b"")
+        probe.unlink()
+    except OSError as exc:
+        return str(exc)
+    return None
+
+
+# Folder names that mean a sync client owns this directory. Recording into
+# one is not forbidden - it is a reasonable way to get files off the PC - but
+# a paused or signed-out client makes the folder vanish mid-session, so the
+# participant is asked rather than surprised.
+_CLOUD_MARKERS = (
+    "onedrive", "dropbox", "google drive", "googledrive", "icloud",
+    "nextcloud", "pcloud", "mega", "yandexdisk",
+)
+
+
+def looks_like_cloud_folder(folder: str | Path) -> bool:
+    """True if the path looks like it belongs to a file-sync client."""
+    text = str(folder).replace("\\", "/").lower()
+    parts = [p for p in text.split("/") if p]
+    return any(any(marker in part for marker in _CLOUD_MARKERS) for part in parts)
+
+
 def discard_if_unused(db_path: str | Path) -> bool:
     """Delete `db_path` when no session was ever written into it (EW-89).
 

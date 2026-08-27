@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 import time
 import uuid
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 from .. import SCHEMA_VERSION, __version__
 from ..clock import SessionClock
@@ -28,6 +29,7 @@ from ..hal.ble import BleTransport
 from ..model import (
     DeviceInfo, Gap, GameEvent, GameRaw, HrRaw, HrSample, RrInterval, SessionMeta,
 )
+from ..sources.game_process import is_game_running
 from ..sources.h10 import HR_MEASUREMENT_UUID, parse_hr_measurement, read_device_info
 from ..sources.riot import (
     DEFAULT_BASE_URL,
@@ -41,10 +43,29 @@ from ..sources.riot import (
 from ..storage.sqlite_sink import (
     SqliteSink, append_session_note, discard_if_unused,
 )
+from .health import Issue, Signals, Thresholds, active_issues, worst
 from .state import Observable, RecorderState
 from .status import Activity, StatusReport, classify_connect_error
 
 _ALLGAMEDATA = "/liveclientdata/allgamedata"
+
+# Written into the existing `gap` table rather than a new one: a lost skin
+# contact is an outage of the signal, exactly like a dropped BLE link, and
+# RiftLab does not read `gap` at all today - so a new source value costs no
+# schema change and breaks nothing (EW-89).
+CONTACT_GAP_SOURCE = "h10_contact"
+
+# Which health issue replaces the tray line, and with which words. BATTERY_LOW
+# is deliberately absent: the battery already has its own line in the menu, and
+# overwriting "Recording match 3" with a battery notice would hide the more
+# important fact that recording is fine.
+_ISSUE_ACTIVITY: dict[Issue, Activity] = {
+    Issue.STORAGE_FAILED: Activity.STORAGE_FAILED,
+    Issue.GAME_NOT_VISIBLE: Activity.GAME_NOT_VISIBLE,
+    Issue.NO_HEART_RATE: Activity.NO_HEART_RATE,
+    Issue.NO_SKIN_CONTACT: Activity.NO_SKIN_CONTACT,
+}
+_HEALTH_ACTIVITIES = frozenset(_ISSUE_ACTIVITY.values())
 
 
 class _Session:
@@ -69,6 +90,8 @@ class SupervisorService:
         *,
         transport: Optional[BleTransport] = None,
         riot_fetch=None,
+        thresholds: Optional[Thresholds] = None,
+        game_probe: Optional[Callable[[], Optional[bool]]] = None,
     ) -> None:
         self._config = config
         self._transport = transport
@@ -96,6 +119,22 @@ class SupervisorService:
         # replace the cell before it dies mid-study rather than after.
         self.battery = Observable(None)
         self._battery_checked_mono = 0.0
+        # Health monitoring (EW-89): the failures that look like success.
+        # Timestamps are monotonic seconds; None means 'not since this match'.
+        self._thresholds = thresholds or Thresholds()
+        self._game_probe = game_probe or is_game_running
+        self._issues: set[Issue] = set()
+        self._last_hr_mono: Optional[float] = None
+        self._last_rr_mono: Optional[float] = None
+        self._last_game_mono: Optional[float] = None
+        self._match_started_mono: Optional[float] = None
+        self._league_running: Optional[bool] = None
+        self._league_checked_mono: Optional[float] = None
+        self._storage_error: Optional[str] = None
+        self._contact_gap_start: Optional[str] = None
+        # Set by the runner to the tray's notifier: these situations lose data
+        # while nobody is looking, so they push instead of waiting to be read.
+        self.on_alert: Optional[Callable[[Issue, bool], None]] = None
 
     # -- status publishing (EW-89) ----------------------------------------
 
@@ -152,6 +191,12 @@ class SupervisorService:
             notes=self._config.notes,
         ))
         self._current = _Session(sink, clock, session_id)
+        # Judge this match on its own: heart rate from the previous one must
+        # not count as 'recent', or a fresh match would look healthy for a
+        # minute (or alarm instantly) on stale timestamps.
+        self._match_started_mono = time.monotonic()
+        self._last_hr_mono = None
+        self._last_rr_mono = None
         self._write_device_info()
         self._publish(RecorderState.RECORDING, Activity.RECORDING)
         return session_id
@@ -177,6 +222,12 @@ class SupervisorService:
         if cur is None:
             return
         hr, rr_list, contact = parse_hr_measurement(payload)
+        # Health timestamps (EW-89). RR is tracked separately from HR because
+        # the H10 keeps sending a frozen HR after losing skin contact, while
+        # RR stops - so 'a number is arriving' proves nothing on its own.
+        self._last_hr_mono = time.monotonic()
+        if rr_list:
+            self._last_rr_mono = self._last_hr_mono
         mono, utc = cur.clock.now()
         # Raw first: if parsing ever proves wrong, the payload is still there.
         cur.sink.write(HrRaw(mono_ns=mono, utc=utc, payload=bytes(payload)))
@@ -231,17 +282,157 @@ class SupervisorService:
         cur = self._current
         if cur is None:
             return
-        # If the H10 is still out when the match ends, record the gap up to now
-        # on this session before we close it. A fresh gap starts next tick if
-        # the link is still down (but between matches HR is discarded anyway).
-        if self._h10_gap_start is not None:
-            cur.sink.mark_gap(Gap(source="h10", start_utc=self._h10_gap_start,
-                                  end_utc=datetime.now(timezone.utc).isoformat()))
-            self._h10_gap_start = None
-        cur.sink.close_session(datetime.now(timezone.utc).isoformat())
-        self._current = None
-        self.matches_recorded += 1
-        self._publish(RecorderState.READY, Activity.WAITING_FOR_MATCH)
+        now_utc = datetime.now(timezone.utc).isoformat()
+        try:
+            # If the H10 is still out when the match ends, record the gap up to
+            # now on this session before we close it. A fresh gap starts next
+            # tick if the link is still down (but between matches HR is
+            # discarded anyway). Same for an unresolved skin-contact gap.
+            if self._h10_gap_start is not None:
+                cur.sink.mark_gap(Gap(source="h10", start_utc=self._h10_gap_start,
+                                      end_utc=now_utc))
+                self._h10_gap_start = None
+            if self._contact_gap_start is not None:
+                cur.sink.mark_gap(Gap(source=CONTACT_GAP_SOURCE,
+                                      start_utc=self._contact_gap_start,
+                                      end_utc=now_utc))
+                self._contact_gap_start = None
+            cur.sink.close_session(now_utc)
+        except (sqlite3.Error, OSError) as exc:
+            # A failing close must not take the recorder down in the middle of
+            # a study: everything already committed stays in the file, and the
+            # next match opens a fresh sink.
+            print(f"[warn] could not close the session cleanly: {exc}")
+            self._storage_error = str(exc)
+        finally:
+            self._current = None
+            self.matches_recorded += 1
+            self._publish(RecorderState.READY, Activity.WAITING_FOR_MATCH)
+
+    # -- health monitoring: the failures that look like success (EW-89) ---
+
+    def _check_health(self) -> None:
+        """Judge the situation, tell the participant what changed.
+
+        Called every watch tick. Only the *edges* are announced - an issue
+        that starts and an issue that ends - so a strap that stays off does
+        not produce a notification per second.
+        """
+        now = time.monotonic()
+        issues = active_issues(
+            Signals(
+                now=now,
+                match_live=self._current is not None,
+                last_hr=self._last_hr_mono,
+                last_rr=self._last_rr_mono,
+                last_game_data=self._last_game_mono,
+                match_started=self._match_started_mono,
+                strap_connected=self._h10_up,
+                league_running=self._league_state(now),
+                storage_error=self._storage_error,
+                battery_pct=self.battery.state,
+            ),
+            self._thresholds,
+        )
+        for issue in sorted(issues - self._issues, key=lambda i: i.value):
+            self._on_issue(issue, raised=True)
+        for issue in sorted(self._issues - issues, key=lambda i: i.value):
+            self._on_issue(issue, raised=False)
+        self._issues = issues
+        self._publish_health()
+
+    def _league_state(self, now: float) -> Optional[bool]:
+        """Is the game running? Cached, and never asked during a match.
+
+        While a match is being recorded the answer is trivially yes. Between
+        matches it is the only way to tell 'nobody is playing' from 'somebody
+        is playing and we cannot see it'.
+        """
+        if self._current is not None:
+            return True
+        due = (
+            self._league_checked_mono is None
+            or now - self._league_checked_mono >= self._config.league_poll_s
+        )
+        if due:
+            self._league_checked_mono = now
+            try:
+                self._league_running = self._game_probe()
+            except Exception as exc:  # never let a process listing matter
+                print(f"[warn] could not check for the game process: {exc}")
+                self._league_running = None
+        return self._league_running
+
+    def _on_issue(self, issue: Issue, raised: bool) -> None:
+        """Log it, notify the participant, and gap it where that applies."""
+        print(f"[health] {issue.value} {'started' if raised else 'resolved'}")
+        if issue is Issue.NO_SKIN_CONTACT:
+            if raised:
+                self._open_contact_gap()
+            else:
+                self._close_contact_gap()
+        if self.on_alert is not None:
+            try:
+                self.on_alert(issue, raised)
+            except Exception as exc:
+                print(f"[warn] could not raise the alert: {exc}")
+
+    def _open_contact_gap(self) -> None:
+        """Mark the start of a stretch where the strap read no heartbeat."""
+        if self._current is not None and self._contact_gap_start is None:
+            self._contact_gap_start = datetime.now(timezone.utc).isoformat()
+
+    def _close_contact_gap(self) -> None:
+        if self._contact_gap_start is None:
+            return
+        if self._current is not None:
+            self._guard_storage(
+                lambda: self._current.sink.mark_gap(Gap(
+                    source=CONTACT_GAP_SOURCE,
+                    start_utc=self._contact_gap_start,
+                    end_utc=datetime.now(timezone.utc).isoformat())),
+                "recording a contact gap",
+            )
+        self._contact_gap_start = None
+
+    def _publish_health(self) -> None:
+        """Let the worst active issue own the tray line, then hand it back."""
+        issue = worst(self._issues)
+        activity = _ISSUE_ACTIVITY.get(issue) if issue is not None else None
+        if activity is not None:
+            self._publish(RecorderState.WARNING, activity)
+        elif self._activity in _HEALTH_ACTIVITIES:
+            # The last thing shown was a warning that no longer applies.
+            if not self._h10_up:
+                return   # the link supervisor states the truth every tick
+            if self._current is not None:
+                self._publish(RecorderState.RECORDING, Activity.RECORDING)
+            else:
+                self._publish(RecorderState.READY, Activity.WAITING_FOR_MATCH)
+
+    # -- storage that may go away mid-study (EW-89) -----------------------
+
+    def _guard_storage(self, action: Callable[[], None], what: str) -> bool:
+        """Run a storage operation; on failure flag it instead of dying.
+
+        An unplugged drive or a signed-out cloud folder used to raise straight
+        out of the watch loop and end the recording silently. Now it becomes a
+        visible issue, rows keep buffering in memory, and the next attempt
+        writes everything once the folder is back.
+        """
+        try:
+            action()
+        except (sqlite3.Error, OSError) as exc:
+            if self._storage_error is None:
+                print(f"[warn] {what} failed: {exc}")
+            self._storage_error = str(exc)
+            return False
+        self._storage_error = None
+        return True
+
+    def _try_open_session(self) -> bool:
+        """Open a session for a match that just started, tolerating storage."""
+        return self._guard_storage(self._open_session, "opening the recording")
 
     # -- H10 link supervision (EW-42) -------------------------------------
 
@@ -397,10 +588,15 @@ class SupervisorService:
                 if data is None:
                     if self._current is not None:
                         self._close_session()      # match ended (close flushes)
+                    self._check_health()           # is League up and we are blind?
                     await asyncio.sleep(self._config.poll_interval_s)
                     continue
+                self._last_game_mono = time.monotonic()
                 if self._current is None:
-                    self._open_session()           # match started
+                    if not self._try_open_session():   # match started
+                        self._check_health()           # storage gone - say so
+                        await asyncio.sleep(self._config.poll_interval_s)
+                        continue
                     last_flush = time.monotonic()
                 self._record_riot(data)
                 # Throttle commits: buffer rows across poll ticks and flush on a
@@ -410,8 +606,10 @@ class SupervisorService:
                 # clean stop or match end.
                 now = time.monotonic()
                 if now - last_flush >= self._config.flush_interval_s:
-                    self._current.sink.flush()
+                    self._guard_storage(self._current.sink.flush,
+                                        "writing the recording")
                     last_flush = now
+                self._check_health()
                 await asyncio.sleep(self._config.poll_interval_s)
         finally:
             if self._current is not None:

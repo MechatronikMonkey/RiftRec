@@ -15,7 +15,9 @@ from pathlib import Path
 from typing import Optional
 
 from ..config import RecorderConfig
-from ..storage.sqlite_sink import unique_db_path
+from ..storage.sqlite_sink import (
+    looks_like_cloud_folder, probe_folder_writable, unique_db_path,
+)
 from .prefs import Prefs, load_prefs, save_prefs
 from .device_scan import scan_polar_devices
 
@@ -175,6 +177,14 @@ class _SettingsDialog:
         # The user only picks a folder; we mint a unique filename so a previous
         # recording is never overwritten (participant_date_time.sqlite).
         folder = self._folder.get().strip() or str(Path.cwd())
+        # Find out here that the folder is unusable - not 40 minutes later with
+        # a ranked game in progress (EW-89).
+        problem = probe_folder_writable(folder)
+        if problem:
+            self._error.set(f"Cannot write to that folder: {problem}")
+            return
+        if looks_like_cloud_folder(folder) and not self._confirm_cloud_folder():
+            return
         db = unique_db_path(folder, participant)
 
         # Remember participant + folder for next time (EW-43).
@@ -187,6 +197,25 @@ class _SettingsDialog:
             device=device,
         )
         self._root.destroy()
+
+    def _confirm_cloud_folder(self) -> bool:
+        """Recording into a synced folder is allowed, but not by accident.
+
+        A sync client that pauses or signs you out makes the folder disappear
+        mid-session. The recorder survives that now (it buffers and warns), but
+        it is worth one question before rather than one support call after.
+        """
+        from tkinter import messagebox
+
+        return bool(messagebox.askokcancel(
+            "Folder is synced to the cloud",
+            "That folder looks like it belongs to a sync client "
+            "(OneDrive, Dropbox, ...).\n\n"
+            "If syncing pauses or you get signed out, RiftRec cannot write "
+            "and the recording is at risk.\n\n"
+            "Use this folder anyway?",
+            parent=self._root,
+        ))
 
     def _cancel(self) -> None:
         self.result = None

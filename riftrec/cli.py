@@ -23,15 +23,17 @@ from .storage.sqlite_sink import SqliteSink
 # once a strap connects or a window opens - those are exactly the imports a
 # frozen build tends to drop, because nothing imports them at start-up.
 _RUNTIME_MODULES = (
-    "asyncio", "sqlite3", "zlib", "json", "configparser",
-    "tkinter", "tkinter.ttk", "tkinter.filedialog", "tkinter.simpledialog",
+    "asyncio", "sqlite3", "zlib", "json", "configparser", "subprocess",
+    "tkinter", "tkinter.ttk", "tkinter.filedialog", "tkinter.messagebox",
+    "tkinter.simpledialog",
     "httpx", "bleak", "pystray", "PIL.Image", "PIL.ImageDraw",
     "riftrec.cli", "riftrec.config", "riftrec.model", "riftrec.clock",
     "riftrec.app.runner", "riftrec.app.tray", "riftrec.app.tray_icons",
     "riftrec.app.settings_window", "riftrec.app.status_window",
     "riftrec.app.prefs", "riftrec.app.device_scan", "riftrec.app.single_instance",
     "riftrec.rte.supervisor", "riftrec.rte.runtime", "riftrec.rte.status",
-    "riftrec.sources.h10", "riftrec.sources.riot",
+    "riftrec.rte.state", "riftrec.rte.health",
+    "riftrec.sources.h10", "riftrec.sources.riot", "riftrec.sources.game_process",
     "riftrec.storage.sqlite_sink", "riftrec.hal.ble_bleak",
 )
 
@@ -146,6 +148,20 @@ def _selfcheck() -> int:
             problems.append(f"missing data file: {schema}")
     except Exception as exc:
         problems.append(f"storage layer unusable: {exc}")
+
+    # The blind-recorder detector (EW-89) shells out to `tasklist`. A frozen,
+    # windowed build is exactly where spawning a console process can quietly
+    # stop working, and the symptom would be a detector that never fires.
+    import sys
+
+    if sys.platform == "win32":
+        try:
+            from .sources.game_process import is_game_running
+
+            if is_game_running() is None:
+                problems.append("game process probe: could not read the process list")
+        except Exception as exc:
+            problems.append(f"game process probe: {exc}")
 
     if problems:
         print(f"[selfcheck] FAILED - {len(problems)} problem(s):")

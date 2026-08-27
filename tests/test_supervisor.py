@@ -200,7 +200,7 @@ def test_reconnects_and_logs_gap_on_h10_dropout() -> None:
             RecorderConfig(participant_id="P01", db_path=db, snapshot_interval_s=0,
                            poll_interval_s=0.0, flush_interval_s=0.0,
                            reconnect_backoff_s=0.0),
-            transport=tr, riot_fetch=fetch)
+            transport=tr, riot_fetch=fetch, game_probe=lambda: None)
         asyncio.run(svc.run(stop))
 
         conn = sqlite3.connect(db)
@@ -240,7 +240,7 @@ def test_waits_for_h10_at_start_instead_of_erroring() -> None:
             RecorderConfig(participant_id="P01", db_path=db, snapshot_interval_s=0,
                            poll_interval_s=0.0, flush_interval_s=0.0,
                            reconnect_backoff_s=0.0),
-            transport=tr, riot_fetch=fetch)
+            transport=tr, riot_fetch=fetch, game_probe=lambda: None)
         asyncio.run(svc.run(stop))
 
         from riftrec.rte.state import RecorderState
@@ -345,7 +345,7 @@ def _run_without_strap_or_match(db):
     svc = SupervisorService(
         RecorderConfig(participant_id="P01", db_path=db, poll_interval_s=0.0,
                        reconnect_backoff_s=0.0),
-        transport=_NeverTransport(), riot_fetch=fetch)
+        transport=_NeverTransport(), riot_fetch=fetch, game_probe=lambda: None)
     reports = []
     svc.report.subscribe(reports.append)
     asyncio.run(svc.run(stop))
@@ -404,3 +404,206 @@ def test_recording_report_names_the_match(tmp_path) -> None:
     svc._close_session()
     assert svc.report.state.activity is Activity.WAITING_FOR_MATCH
     assert svc.matches_recorded == 1
+
+
+# -- Health monitoring: the failures that look like success (EW-89) --------
+
+
+def _hr_with_rr(bpm: int) -> bytes:
+    """flags=0x10 (RR present, uint8 HR) + one 1000 ms interval."""
+    return bytes([0x10, bpm, 0x00, 0x04])
+
+
+def _health_service(db, **kw):
+    from riftrec.rte.health import Thresholds
+
+    svc = SupervisorService(
+        RecorderConfig(participant_id="P01", db_path=db),
+        transport=_FakeTransport(),
+        thresholds=kw.pop("thresholds", Thresholds()),
+        game_probe=kw.pop("game_probe", lambda: None),
+    )
+    svc._h10_up = True          # the link is up; we are not driving the loop
+    svc.alerts = []
+    svc.on_alert = lambda issue, raised: svc.alerts.append((issue, raised))
+    return svc
+
+
+def test_frozen_heart_rate_without_rr_is_caught_and_gapped(tmp_path) -> None:
+    """The H10 keeps sending a plausible HR after losing skin contact. Only the
+    absence of RR gives it away - and the stretch has to end up in the file, or
+    the analysis cannot tell that section from a clean one."""
+    from riftrec.rte.health import Issue
+    from riftrec.rte.supervisor import CONTACT_GAP_SOURCE
+
+    db = tmp_path / "contact.sqlite"
+    svc = _health_service(db)
+    svc._open_session()
+
+    svc._on_hr(_hr_with_rr(70))          # healthy: HR and RR
+    svc._check_health()
+    assert svc.alerts == []
+
+    svc._on_hr(_hr(70))                  # frozen value: HR, no RR
+    svc._last_rr_mono -= 60              # ...for a minute
+    svc._check_health()
+    assert (Issue.NO_SKIN_CONTACT, True) in svc.alerts
+
+    svc._on_hr(_hr_with_rr(72))          # contact is back
+    svc._check_health()
+    assert (Issue.NO_SKIN_CONTACT, False) in svc.alerts
+
+    svc._close_session()
+    conn = sqlite3.connect(db)
+    try:
+        gaps = conn.execute(
+            "SELECT source, start_utc, end_utc FROM gap").fetchall()
+    finally:
+        conn.close()
+    assert len(gaps) == 1, gaps
+    assert gaps[0][0] == CONTACT_GAP_SOURCE
+    assert gaps[0][1] and gaps[0][2]
+
+
+def test_contact_still_lost_at_match_end_is_gapped_up_to_the_end(tmp_path) -> None:
+    from riftrec.rte.supervisor import CONTACT_GAP_SOURCE
+
+    db = tmp_path / "contact2.sqlite"
+    svc = _health_service(db)
+    svc._open_session()
+    svc._on_hr(_hr_with_rr(70))
+    svc._on_hr(_hr(70))
+    svc._last_rr_mono -= 60
+    svc._check_health()
+    svc._close_session()                 # match ends while still out of contact
+
+    conn = sqlite3.connect(db)
+    try:
+        sources = [r[0] for r in conn.execute("SELECT source FROM gap")]
+    finally:
+        conn.close()
+    assert sources == [CONTACT_GAP_SOURCE]
+
+
+def test_the_tray_line_changes_when_the_data_stops_being_usable(tmp_path) -> None:
+    """A red "recording" icon while nothing usable is recorded is the lie this
+    ticket exists to remove."""
+    from riftrec.rte.state import RecorderState
+    from riftrec.rte.status import Activity
+
+    svc = _health_service(tmp_path / "warn.sqlite")
+    svc._open_session()
+    assert svc.status.state is RecorderState.RECORDING
+
+    svc._on_hr(_hr_with_rr(70))
+    svc._on_hr(_hr(70))
+    svc._last_rr_mono -= 60
+    svc._check_health()
+    assert svc.status.state is RecorderState.WARNING
+    assert svc.report.state.activity is Activity.NO_SKIN_CONTACT
+    assert "electrodes" in svc.report.state.detail
+
+    svc._on_hr(_hr_with_rr(70))          # resolved -> back to the truth
+    svc._check_health()
+    assert svc.status.state is RecorderState.RECORDING
+    assert svc.report.state.activity is Activity.RECORDING
+
+
+def test_storage_failure_is_announced_instead_of_ending_the_run(tmp_path) -> None:
+    from riftrec.rte.health import Issue
+    from riftrec.rte.state import RecorderState
+
+    svc = _health_service(tmp_path / "storage.sqlite")
+
+    def boom() -> None:
+        raise OSError("The device is not ready")
+
+    assert svc._guard_storage(boom, "writing the recording") is False
+    svc._check_health()
+    assert (Issue.STORAGE_FAILED, True) in svc.alerts
+    assert svc.status.state is RecorderState.WARNING
+    assert "not reachable" in svc.report.state.detail
+
+    assert svc._guard_storage(lambda: None, "writing the recording") is True
+    svc._check_health()
+    assert (Issue.STORAGE_FAILED, False) in svc.alerts
+
+
+def test_a_match_with_unreachable_storage_does_not_crash_the_recorder(tmp_path) -> None:
+    """An unplugged drive used to raise straight out of the watch loop and end
+    the recording without a word."""
+    from riftrec.rte.health import Issue
+
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"")             # a file where a directory is needed
+    stop = asyncio.Event()
+    ticks = {"n": 0}
+
+    async def fetch():
+        ticks["n"] += 1
+        if ticks["n"] >= 3:
+            stop.set()
+        return _riot_frame(ticks["n"])
+
+    svc = SupervisorService(
+        RecorderConfig(participant_id="P01", db_path=blocker / "deep" / "x.sqlite",
+                       poll_interval_s=0.0, reconnect_backoff_s=0.0),
+        transport=_FakeTransport(), riot_fetch=fetch, game_probe=lambda: None)
+    alerts = []
+    svc.on_alert = lambda issue, raised: alerts.append((issue, raised))
+
+    asyncio.run(svc.run(stop))           # must return, not raise
+
+    assert (Issue.STORAGE_FAILED, True) in alerts
+    assert svc.matches_recorded == 0
+
+
+def test_league_running_while_the_api_stays_silent_is_announced(tmp_path) -> None:
+    """The deaf recorder: the tray would otherwise sit on a green "ready,
+    waiting for a match" while matches are being played."""
+    from riftrec.rte.health import Issue
+
+    db = tmp_path / "blind.sqlite"
+    stop = asyncio.Event()
+    ticks = {"n": 0}
+
+    async def fetch():
+        ticks["n"] += 1
+        if ticks["n"] >= 3:
+            stop.set()
+        return None                      # the API never answers
+
+    svc = SupervisorService(
+        RecorderConfig(participant_id="P01", db_path=db, poll_interval_s=0.0,
+                       reconnect_backoff_s=0.0, league_poll_s=0.0),
+        transport=_FakeTransport(), riot_fetch=fetch, game_probe=lambda: True)
+    alerts = []
+    svc.on_alert = lambda issue, raised: alerts.append((issue, raised))
+
+    asyncio.run(svc.run(stop))
+
+    assert (Issue.GAME_NOT_VISIBLE, True) in alerts
+    assert not db.exists()               # nothing recorded -> no leftover file
+
+
+def test_no_alarm_when_nobody_is_playing(tmp_path) -> None:
+    """The normal idle evening must stay silent."""
+    db = tmp_path / "idle.sqlite"
+    stop = asyncio.Event()
+    ticks = {"n": 0}
+
+    async def fetch():
+        ticks["n"] += 1
+        if ticks["n"] >= 3:
+            stop.set()
+        return None
+
+    svc = SupervisorService(
+        RecorderConfig(participant_id="P01", db_path=db, poll_interval_s=0.0,
+                       reconnect_backoff_s=0.0, league_poll_s=0.0),
+        transport=_FakeTransport(), riot_fetch=fetch, game_probe=lambda: False)
+    alerts = []
+    svc.on_alert = lambda issue, raised: alerts.append((issue, raised))
+
+    asyncio.run(svc.run(stop))
+    assert alerts == []

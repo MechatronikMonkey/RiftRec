@@ -37,6 +37,10 @@ class Activity(enum.Enum):
     STRAP_LOST = "strap_lost"                        # was connected, dropped
     WAITING_FOR_MATCH = "waiting_for_match"          # strap up, no game yet
     RECORDING = "recording"
+    NO_HEART_RATE = "no_heart_rate"          # match live, nothing arriving
+    NO_SKIN_CONTACT = "no_skin_contact"      # HR arriving, RR stopped
+    GAME_NOT_VISIBLE = "game_not_visible"    # League up, API silent
+    STORAGE_FAILED = "storage_failed"        # cannot write the file
     NO_PARTICIPANT_ID = "no_participant_id"
     STOPPED = "stopped"
 
@@ -89,6 +93,10 @@ _HEADLINES: dict[Activity, str] = {
     Activity.STRAP_LOST: "Chest strap connection lost",
     Activity.WAITING_FOR_MATCH: "Ready — waiting for a match",
     Activity.RECORDING: "Recording",
+    Activity.NO_HEART_RATE: "Recording — but no heart rate",
+    Activity.NO_SKIN_CONTACT: "Recording — strap has lost contact",
+    Activity.GAME_NOT_VISIBLE: "League is running, the game is not visible",
+    Activity.STORAGE_FAILED: "Cannot save the recording",
     Activity.NO_PARTICIPANT_ID: "Not recording — no participant ID",
     Activity.STOPPED: "Stopped",
 }
@@ -130,6 +138,18 @@ def detail_for(report: StatusReport) -> str:
                 "recording begins on its own when the match does.")
     if a is Activity.RECORDING:
         return "Heart rate and game data are being saved."
+    if a is Activity.NO_HEART_RATE:
+        return ("The match is being recorded, but no heart rate is arriving — "
+                "is the strap on, and are the electrodes moistened?")
+    if a is Activity.NO_SKIN_CONTACT:
+        return ("The strap is connected but no longer reading your heartbeat. "
+                "Push it down against the skin and moisten the electrodes.")
+    if a is Activity.GAME_NOT_VISIBLE:
+        return ("League is running, but RiftRec cannot read the live game data — "
+                "nothing is being recorded. Please report this.")
+    if a is Activity.STORAGE_FAILED:
+        return ("The folder RiftRec saves to is not reachable. Data is kept in "
+                "memory and written as soon as the folder is back.")
     if a is Activity.NO_PARTICIPANT_ID:
         return ("Enter the participant ID you were given in the settings, "
                 "then start RiftRec again.")

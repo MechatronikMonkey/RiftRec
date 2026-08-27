@@ -16,6 +16,7 @@ class RecorderState(enum.Enum):
     CONNECTING = "connecting"
     READY = "ready"          # sources connected, waiting for match start
     RECORDING = "recording"  # match detected, writing data
+    WARNING = "warning"      # running, but something makes the data unusable
     STOPPED = "stopped"
     ERROR = "error"
 

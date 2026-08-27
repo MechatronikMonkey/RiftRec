@@ -55,3 +55,15 @@ class RecorderConfig:
     # BLE link can stay connected for hours, so a value read only at connect
     # time would be stale exactly when a participant needs the warning.
     battery_poll_s: float = 900.0  # 15 minutes
+
+    # How often to check whether `League of Legends.exe` is running, while no
+    # match is being recorded. Distinguishes "no match right now" from "a
+    # match is being played and we cannot see it" - the silent failure that
+    # looks exactly like a healthy idle recorder (EW-89). Only polled between
+    # matches, and coarsely, because it spawns a process listing.
+    #
+    # Note on EW-51 (stutter under an on-access antivirus shield): this never
+    # runs while a match is being recorded normally - during one, the answer is
+    # trivially yes and no probe happens. It only fires while idle, and while a
+    # game is running that we cannot see, which is broken anyway.
+    league_poll_s: float = 30.0

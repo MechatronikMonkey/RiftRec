@@ -24,6 +24,7 @@ from typing import Callable, Optional
 
 import pystray
 
+from ..rte.health import Issue, notification_for
 from ..rte.state import Observable, RecorderState
 from ..rte.status import StatusReport, tooltip_text
 from . import status_window
@@ -111,6 +112,20 @@ class TrayController:
     def _on_state(self, state: RecorderState) -> None:
         self._current = state
         self._redraw(icon=True)
+
+    def alert(self, issue: Issue, raised: bool = True) -> None:
+        """Pop a Windows notification when a health issue starts or ends.
+
+        The status line is passive - it only helps someone who looks. These
+        situations lose data while nobody is looking, so they push (EW-89).
+        Called from the supervisor thread; failure to notify must never
+        disturb a recording.
+        """
+        title, message = notification_for(issue, raised)
+        try:
+            self._icon.notify(message, title)
+        except Exception as exc:
+            print(f"[warn] could not show a notification: {exc}")
 
     def _on_report(self, report: StatusReport) -> None:
         """The reason changed: new tooltip and new menu wording (EW-89)."""

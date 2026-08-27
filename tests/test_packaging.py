@@ -32,15 +32,17 @@ def test_selfcheck_passes_from_source() -> None:
     assert _selfcheck() == 0
 
 
-def test_selfcheck_covers_every_riftrec_module_the_gui_path_uses() -> None:
-    """A new app module has to join the list, or a frozen build can drop it."""
+def test_selfcheck_covers_every_riftrec_module_the_recorder_uses() -> None:
+    """A new module has to join the list, or a frozen build can drop it and the
+    only symptom is a window that never opens."""
     from riftrec.cli import _RUNTIME_MODULES
 
     listed = set(_RUNTIME_MODULES)
-    for module in (ROOT / "riftrec" / "app").glob("*.py"):
-        if module.stem == "__init__":
-            continue
-        assert f"riftrec.app.{module.stem}" in listed, module.name
+    for package in ("app", "rte", "sources", "storage", "hal"):
+        for module in (ROOT / "riftrec" / package).glob("*.py"):
+            if module.stem in ("__init__", "base", "fake", "ble", "schema"):
+                continue     # protocols and test doubles carry no runtime imports
+            assert f"riftrec.{package}.{module.stem}" in listed, module
 
 
 # -- installer stays in step with the app -----------------------------------

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib
 from pathlib import Path
 
 from .config import RecorderConfig
@@ -16,6 +17,23 @@ from .rte.runtime import RecorderRuntime
 from .rte.state import RecorderState
 from .sources.base import SignalSource
 from .storage.sqlite_sink import SqliteSink
+
+
+# Everything the recorder touches at runtime, including the paths only reached
+# once a strap connects or a window opens - those are exactly the imports a
+# frozen build tends to drop, because nothing imports them at start-up.
+_RUNTIME_MODULES = (
+    "asyncio", "sqlite3", "zlib", "json", "configparser",
+    "tkinter", "tkinter.ttk", "tkinter.filedialog", "tkinter.simpledialog",
+    "httpx", "bleak", "pystray", "PIL.Image", "PIL.ImageDraw",
+    "riftrec.cli", "riftrec.config", "riftrec.model", "riftrec.clock",
+    "riftrec.app.runner", "riftrec.app.tray", "riftrec.app.tray_icons",
+    "riftrec.app.settings_window", "riftrec.app.status_window",
+    "riftrec.app.prefs", "riftrec.app.device_scan", "riftrec.app.single_instance",
+    "riftrec.rte.supervisor", "riftrec.rte.runtime", "riftrec.rte.status",
+    "riftrec.sources.h10", "riftrec.sources.riot",
+    "riftrec.storage.sqlite_sink", "riftrec.hal.ble_bleak",
+)
 
 
 def _build_sources(config: RecorderConfig) -> list[SignalSource]:
@@ -78,10 +96,13 @@ def _parse_args(argv: list[str] | None) -> "RecorderConfig | str":
     rec.add_argument("--snapshot-interval", dest="snapshot_interval_s", type=float, default=5.0)
 
     sub.add_parser("gui", help="Launch the settings window + hands-off tray recorder (EW-38)")
+    sub.add_parser(
+        "selfcheck",
+        help="Import everything the recorder needs and exit 0/1 (packaging smoke test)")
 
     args = parser.parse_args(argv)
-    if args.command == "gui":
-        return "gui"
+    if args.command in ("gui", "selfcheck"):
+        return args.command
     return RecorderConfig(
         participant_id=args.participant_id,
         session_index=args.session_index,
@@ -93,6 +114,46 @@ def _parse_args(argv: list[str] | None) -> "RecorderConfig | str":
         poll_interval_s=args.poll_interval_s,
         snapshot_interval_s=args.snapshot_interval_s,
     )
+
+
+def _selfcheck() -> int:
+    """Import every runtime dependency and check the bundled data files (EW-89).
+
+    This is the packaging smoke test. The reason the zipped version never
+    started on Bicas' PC was a missing Python dependency; in a frozen build the
+    same class of failure - a module PyInstaller did not notice, or the schema
+    file left out of the bundle - shows up as a window that simply never
+    appears, with nothing on screen to explain it. Running this against the
+    built exe turns that into a failed build instead of a failed participant.
+
+    Returns a process exit code: 0 = everything imports, 1 = something is
+    missing (each miss is printed, and under pythonw lands in riftrec.log).
+    """
+    problems: list[str] = []
+    for name in _RUNTIME_MODULES:
+        try:
+            importlib.import_module(name)
+        except Exception as exc:  # ImportError, but a broken C-ext can raise anything
+            problems.append(f"import {name}: {exc}")
+
+    # schema.sql is read from disk at runtime, so it has to be inside the
+    # bundle - PyInstaller does not pick up non-Python files by itself.
+    try:
+        from .storage import sqlite_sink
+
+        schema = Path(sqlite_sink.__file__).with_name("schema.sql")
+        if not schema.exists():
+            problems.append(f"missing data file: {schema}")
+    except Exception as exc:
+        problems.append(f"storage layer unusable: {exc}")
+
+    if problems:
+        print(f"[selfcheck] FAILED - {len(problems)} problem(s):")
+        for line in problems:
+            print(f"[selfcheck]   {line}")
+        return 1
+    print(f"[selfcheck] OK - {len(_RUNTIME_MODULES)} modules, schema.sql present")
+    return 0
 
 
 def _redirect_output_if_windowless() -> None:
@@ -121,6 +182,9 @@ def _redirect_output_if_windowless() -> None:
 
 def main(argv: list[str] | None = None) -> None:
     config = _parse_args(argv)
+    if config == "selfcheck":
+        _redirect_output_if_windowless()
+        raise SystemExit(_selfcheck())
     if config == "gui":
         _redirect_output_if_windowless()
         from .app.single_instance import acquire_single_instance, warn_already_running

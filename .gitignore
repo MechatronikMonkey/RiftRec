@@ -12,3 +12,9 @@ venv/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+
+# Installer build output (packaging/build.ps1)
+/dist/
+/build/
+.venv-build/
+packaging/riftrec.ico

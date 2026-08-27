@@ -169,6 +169,28 @@ is logged to `%APPDATA%\RiftRec\riftrec.log`.
 Tests (no H10, no match): `PYTHONPATH=. python -m pytest tests/`, or run a single file, e.g.
 `PYTHONPATH=. python tests/test_supervisor.py`.
 
+## Contributing and releases
+
+`main` is protected and takes no direct pushes: every change goes through a branch and a
+pull request, where two checks have to pass — `tests` (the full suite) and `installer`
+(freeze, self-check, compile, and upload an installable build of that branch).
+
+A release is one tag. Bump `__version__` in a pull request, then:
+
+```
+git switch main && git pull
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+[`release.yml`](.github/workflows/release.yml) verifies that the tag matches `__version__`
+and sits on `main`, runs the tests, builds the installer, and publishes it as a GitHub
+release with its SHA256. The version is not cosmetic: every recording stores it in
+`session.app_version`, so a mislabelled build makes it impossible to tell later which
+software produced which data.
+
+Full rules, branch naming, commit convention and the one-off repository setup:
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Building the installer (EW-89)
 
 ```
@@ -176,10 +198,9 @@ powershell -ExecutionPolicy Bypass -File packaging\build.ps1
 ```
 
 PyInstaller freezes the app into `dist\RiftRec\` (one folder, with a private CPython), Inno
-Setup wraps that into `dist\RiftRec-Setup-<version>.exe`. The same steps run in CI on every
-push that touches `riftrec/` or `packaging/`, and a `v*` tag publishes the installer as a
-GitHub release — see [packaging/README.md](packaging/README.md) for the details, including
-how to plug in a code-signing certificate once it arrives.
+Setup wraps that into `dist\RiftRec-Setup-<version>.exe`. The same steps run in CI — see
+[packaging/README.md](packaging/README.md) for the details, including how to plug in a
+code-signing certificate once it arrives.
 
 The build's own smoke test is `RiftRec.exe selfcheck`: it imports everything the recorder
 touches at runtime and checks that `schema.sql` made it into the bundle, then exits 0 or 1.

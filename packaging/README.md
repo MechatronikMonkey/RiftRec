@@ -10,8 +10,11 @@ the target PC — the three things that stopped the zipped version from starting
 powershell -ExecutionPolicy Bypass -File packaging\build.ps1
 ```
 
-Six steps, all of which CI repeats on a clean runner
-([`.github/workflows/build-installer.yml`](../.github/workflows/build-installer.yml)):
+Six steps. Steps 2, 3, 4 and 6 are also a composite action
+([`.github/actions/build-installer`](../.github/actions/build-installer/action.yml)) shared
+by [`ci.yml`](../.github/workflows/ci.yml) and
+[`release.yml`](../.github/workflows/release.yml), so the installer a participant downloads
+is produced by exactly the steps that were already green on the pull request:
 
 | # | Step | Output |
 |---|------|--------|
@@ -82,7 +85,8 @@ powershell -File packaging\build.ps1 -SignCommand 'signtool.exe sign /fd sha256 
 `riftrec.iss` and signs both the setup and the uninstaller.
 
 In CI, put the certificate in repository secrets and add the same two flags to the
-"Build the installer" step; nothing else in the workflow changes.
+"Compile the installer" step of the composite action; nothing else changes, and because
+both workflows share that action, CI and release stay signed the same way.
 
 Until then every participant meets **"Windows protected your PC"** on first run
 (More info → Run anyway), which the pilot guide in the top-level README spells out.

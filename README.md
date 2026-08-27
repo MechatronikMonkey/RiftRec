@@ -17,13 +17,22 @@ Three steps: **download** the app, **pair** the Polar H10 once, then **start** r
 > ribbed pads on the inside). A dry H10 lying on the desk does not transmit and will not
 > be found.
 
-## 1 · Download
+## 1 · Install
 
-![Download the ZIP from GitHub](howto-download-github-norelease.png)
+Download **`RiftRec-Setup-<version>.exe`** from the
+[Releases page](https://github.com/MechatronikMonkey/RiftRec/releases) and run it. That one
+file is everything RiftRec needs — no Python, no pip, and no internet connection once it is
+downloaded.
 
-On the RiftRec GitHub page, click the green **Code** button (1), then **Download ZIP** (2).
-There is no separate release — the ZIP of the `main` branch *is* the app. Unzip it to a
-permanent location (e.g. your Documents folder); you get a **`RiftRec-main`** folder.
+Windows will show **"Windows protected your PC"**, because the installer is not code-signed
+yet: click **More info**, then **Run anyway**. Installing needs no administrator rights — it
+goes into your own user account and adds a **RiftRec** entry to the Start menu.
+
+> RiftRec deliberately does **not** start itself with Windows. Recording is something you
+> start on purpose, at the same moment you put the chest strap on.
+
+Your antivirus may also complain about a program it has never seen before. If it blocks
+RiftRec, allow it — and please tell us, because that is worth knowing before the study runs.
 
 ## 2 · Pair the Polar H10 in Windows (once)
 
@@ -53,16 +62,7 @@ the connection itself when you start recording.
 
 ## 3 · Start recording
 
-![Double-click Start RiftRec.bat](howto-start-riftrec.png)
-
-Open the unzipped **`RiftRec-main`** folder and double-click **`Start RiftRec.bat`**.
-
-![Windows security warning](howto-start-riftrec-first-security-settings.png)
-
-Windows shows a security warning because the file is not signed. Untick **"Always ask
-before opening this file"** (1) and click **Run** (2). On the very first launch RiftRec then
-installs what it needs, which takes about a minute (needs internet); later launches start
-immediately.
+Put the strap on, then open the **Start menu** and click **RiftRec**.
 
 ![Session settings window](howto-start-riftrec-first-setup.png)
 
@@ -75,8 +75,15 @@ pick it) (2). Choose a **Storage folder** for the recordings (3), then click **S
 
 The window closes and RiftRec runs in the system tray. Click the **^** arrow to show hidden
 icons (1); the RiftRec icon turns **green** once the H10 is connected and ready (2). It turns
-**red** while a match is being recorded. **Right-click** the icon to *add a note* or to *stop
-and exit*. Just play — matches are detected and recorded automatically.
+**red** while a match is being recorded. Just play — matches are detected and recorded
+automatically.
+
+**If you are ever unsure whether it is working, ask it.** Hover the icon, or right-click it:
+the top two lines say what RiftRec is doing *and why* in plain words — for example
+*"Chest strap not found — put the H10 on and moisten the electrodes, then give it a moment;
+RiftRec keeps trying (attempt 12)."* **Show status…** (or a double-click on the icon) opens
+the same thing in a window, together with the folder your recordings are going to. The rest
+of the menu is *Add note…* and *Stop and exit*.
 
 **Watch the battery.** Hovering the tray icon, and the first line of the right-click menu,
 show the strap's remaining battery — e.g. `Battery: 74%`. Below 30% it reads
@@ -86,14 +93,18 @@ zero: a strap that dies mid-match costs the whole session. The value refreshes a
 
 ## Troubleshooting
 
-- **Tray icon stays amber (connecting):** the strap must be worn with moistened electrodes.
-  RiftRec keeps retrying and connects within a few seconds once the H10 advertises — you do
-  not need to keep it "Connected" in Windows.
+- **Tray icon stays amber (connecting):** hover it or open **Show status…** — it names the
+  reason. Usually the strap is not worn or the electrodes are dry; RiftRec keeps retrying and
+  connects within seconds once the H10 advertises. You do **not** need it to show as
+  "Connected" in Windows' Bluetooth list.
 - **Nothing happens / it won't start:** every run writes a log to
   `%APPDATA%\RiftRec\riftrec.log`. Open it (paste that path into the Explorer address bar) —
   the last lines say what went wrong. It's the first place to look when helping remotely.
 - **"RiftRec is already running":** only one recorder can run at a time. Check the tray for
   the existing icon.
+- **No file where you expected one:** a run that never recorded a match deletes its own
+  (empty) `.sqlite` again, so only files with real data stay in your folder. **Show status…**
+  tells you how many matches this run has recorded.
 
 ---
 
@@ -149,13 +160,31 @@ python -m riftrec record --participant P01 --session 3 --source h10,riot --db P0
 python -m riftrec gui
 ```
 
-Pilots use `Start RiftRec.bat`, which creates a local `.venv`, installs only the recorder
-runtime deps (`requirements-recorder.txt` — no PMD/dongle spike packages), and launches the
-tray GUI windowless. Participant id + storage folder persist in `%APPDATA%\RiftRec\prefs.ini`;
-output is logged to `%APPDATA%\RiftRec\riftrec.log`.
+Pilots get the installer (see below). `Start RiftRec.bat` is the source-checkout
+equivalent: it creates a local `.venv`, installs only the recorder runtime deps
+(`requirements-recorder.txt` — no PMD/dongle spike packages), and launches the tray GUI
+windowless. Participant id + storage folder persist in `%APPDATA%\RiftRec\prefs.ini`; output
+is logged to `%APPDATA%\RiftRec\riftrec.log`.
 
 Tests (no H10, no match): `PYTHONPATH=. python -m pytest tests/`, or run a single file, e.g.
 `PYTHONPATH=. python tests/test_supervisor.py`.
+
+## Building the installer (EW-89)
+
+```
+powershell -ExecutionPolicy Bypass -File packaging\build.ps1
+```
+
+PyInstaller freezes the app into `dist\RiftRec\` (one folder, with a private CPython), Inno
+Setup wraps that into `dist\RiftRec-Setup-<version>.exe`. The same steps run in CI on every
+push that touches `riftrec/` or `packaging/`, and a `v*` tag publishes the installer as a
+GitHub release — see [packaging/README.md](packaging/README.md) for the details, including
+how to plug in a code-signing certificate once it arrives.
+
+The build's own smoke test is `RiftRec.exe selfcheck`: it imports everything the recorder
+touches at runtime and checks that `schema.sql` made it into the bundle, then exits 0 or 1.
+That catches the one failure a frozen build hides well — a dependency PyInstaller did not
+see, which on a participant's PC looks like a window that simply never opens.
 
 ## Data schema (SQLite = contract to RiftLab)
 
@@ -258,6 +287,7 @@ the result back via `root.after(...)`.
 ## Folder structure
 
 - `riftrec/` — the recorder package (see Architecture)
+- `packaging/` — installer build: PyInstaller spec, Inno Setup script, icon generator, `build.ps1`
 - `tests/` — hardware-/match-free tests (parsers, sources via fakes, end-to-end pipe, supervisor)
 - `spikes/` — short feasibility checks (not for continuous operation, no formal tests)
   - `h10_ble_scan.py` — pure BLE discovery: is the H10 found?

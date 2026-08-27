@@ -71,6 +71,11 @@ code). Leave **Start session #** at 0 and the **H10 device** on *auto* (or click
 pick it) (2). Choose a **Storage folder** for the recordings (3), then click **Save & run**
 (4). Your participant ID and folder are remembered for next time.
 
+Prefer an ordinary local folder. If you pick one that a sync client owns (OneDrive, Dropbox,
+…) RiftRec will ask first — such a folder can disappear mid-session when syncing pauses or
+you get signed out. If the folder cannot be written to at all, you are told right away
+instead of finding out 40 minutes into a game.
+
 ![RiftRec running in the tray](howto-start-riftrec-wait-connected.png)
 
 The window closes and RiftRec runs in the system tray. Click the **^** arrow to show hidden
@@ -84,6 +89,21 @@ the top two lines say what RiftRec is doing *and why* in plain words — for exa
 RiftRec keeps trying (attempt 12)."* **Show status…** (or a double-click on the icon) opens
 the same thing in a window, together with the folder your recordings are going to. The rest
 of the menu is *Add note…* and *Stop and exit*.
+
+**And it speaks up by itself.** Some problems look exactly like everything working — the app
+is running, the icon is there, you are playing, and nothing is being recorded. When RiftRec
+notices one of those it shows a Windows notification saying what happened and what to do,
+and the tray icon changes from a dot to an **orange triangle**:
+
+| What you see | What it means |
+|---|---|
+| *No heart rate* | The match is being recorded but nothing is coming from the strap. |
+| *Chest strap lost skin contact* | The strap is connected but no longer reading you — push it down, moisten the electrodes. |
+| *League is running, RiftRec sees no game* | Nothing is being recorded. **Please tell us** — this one you cannot fix. |
+| *RiftRec cannot save* | The storage folder is unreachable. Data is held in memory until it is back. |
+
+The triangle means "still running, but what is being recorded is not usable". Fix the cause
+and it turns back into a dot on its own.
 
 **Watch the battery.** Hovering the tray icon, and the first line of the right-click menu,
 show the strap's remaining battery — e.g. `Battery: 74%`. Below 30% it reads
@@ -105,6 +125,16 @@ zero: a strap that dies mid-match costs the whole session. The value refreshes a
 - **No file where you expected one:** a run that never recorded a match deletes its own
   (empty) `.sqlite` again, so only files with real data stay in your folder. **Show status…**
   tells you how many matches this run has recorded.
+- **Orange triangle in the tray:** RiftRec is running but something makes the recording
+  unusable. Hover it or open **Show status…** for the reason — it is one of the four in the
+  table above.
+- **"League is running, RiftRec sees no game":** RiftRec cannot reach the game's live data
+  (`127.0.0.1:2999`). An overlay, a firewall or a VPN is the usual cause. Nothing is being
+  recorded while this shows, so please report it rather than playing on.
+
+**Send your files early.** Send the first recording right after your first session rather
+than collecting them — if something is silently not working, that is how we find out in a
+day instead of at the end of the study, when those games can no longer be replayed.
 
 ---
 

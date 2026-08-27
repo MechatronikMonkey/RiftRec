@@ -18,7 +18,10 @@ from riftrec.cli import _selfcheck
 ROOT = Path(__file__).resolve().parents[1]
 ISS = (ROOT / "packaging" / "riftrec.iss").read_text(encoding="utf-8")
 SPEC = (ROOT / "packaging" / "riftrec.spec").read_text(encoding="utf-8")
-WORKFLOW = (ROOT / ".github" / "workflows" / "build-installer.yml").read_text(encoding="utf-8")
+CI = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+RELEASE = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+BUILD_ACTION = (ROOT / ".github" / "actions" / "build-installer" / "action.yml").read_text(encoding="utf-8")
+PROTECTION = (ROOT / ".github" / "setup-branch-protection.ps1").read_text(encoding="utf-8")
 LAUNCHER = (ROOT / "packaging" / "riftrec_launcher.py").read_text(encoding="utf-8")
 
 
@@ -155,12 +158,53 @@ def test_launcher_defaults_to_the_tray_recorder() -> None:
 
 # -- CI does the same thing ------------------------------------------------
 
-def test_workflow_runs_the_tests_and_the_frozen_selfcheck() -> None:
-    """An installer must never be published from a red suite or a broken freeze."""
-    assert "pytest tests/" in WORKFLOW
-    assert "selfcheck" in WORKFLOW
-    assert "riftrec.spec" in WORKFLOW
-    assert "riftrec.iss" in WORKFLOW
+def test_the_build_steps_exist_once_and_both_workflows_use_them() -> None:
+    """CI and release must not grow separate build paths - the installer people
+    download has to be produced by the steps that were already green on the PR."""
+    for step in ("riftrec.spec", "riftrec.iss", "selfcheck", "make_icon.py"):
+        assert step in BUILD_ACTION, step
+    for workflow in (CI, RELEASE):
+        assert "./.github/actions/build-installer" in workflow
+        assert "pyinstaller --noconfirm" not in workflow  # only in the action
+
+
+def test_both_workflows_run_the_test_suite() -> None:
+    """An installer must never be built from a red suite."""
+    assert "pytest tests/" in CI
+    assert "pytest tests/" in RELEASE
+
+
+def test_release_refuses_a_tag_that_disagrees_with_the_package_version() -> None:
+    """Every recording stores app_version, so a mislabelled installer makes it
+    impossible to tell later which build produced which data."""
+    assert "__version__" in RELEASE
+    assert "does not match" in RELEASE
+    assert "origin/main" in RELEASE      # and it must be released from main
+
+
+def test_required_checks_match_the_ci_job_names() -> None:
+    """The one drift that blocks every pull request forever: branch protection
+    waiting on a status check whose job was renamed. GitHub gives no warning -
+    the PR simply never becomes mergeable."""
+    import re
+
+    declared = re.search(r'\$checks\s*=\s*@\(([^)]*)\)', PROTECTION)
+    assert declared, "could not find the required-checks list in the protection script"
+    required = re.findall(r'"([^"]+)"', declared.group(1))
+    assert required, required
+
+    jobs_block = CI.split("jobs:", 1)[1]
+    job_names = set(re.findall(r'^  ([a-zA-Z][\w-]*):$', jobs_block, re.MULTILINE))
+    for check in required:
+        assert check in job_names, (check, sorted(job_names))
+
+
+def test_ci_runs_on_every_pull_request_without_a_path_filter() -> None:
+    """A required check that is skipped because no path matched leaves the pull
+    request waiting for a report that never comes."""
+    trigger = CI.split("jobs:", 1)[0]
+    assert "pull_request:" in trigger
+    assert "paths:" not in trigger
 
 
 def test_launcher_is_the_frozen_entry_point() -> None:

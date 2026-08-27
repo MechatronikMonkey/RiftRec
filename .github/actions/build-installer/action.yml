@@ -1,0 +1,65 @@
+# Freeze RiftRec and compile the Windows installer (EW-89).
+#
+# Shared by ci.yml (every pull request) and release.yml (every v* tag), so the
+# installer a participant downloads is built by exactly the same steps that were
+# already green on the pull request - there is no separate "release build" that
+# could differ from what was tested.
+name: Build RiftRec installer
+description: Freeze the app with PyInstaller, self-check it, and compile the Inno Setup installer.
+
+inputs:
+  version:
+    description: Version to stamp on the installer (without a leading "v").
+    required: true
+
+outputs:
+  installer:
+    description: Path to the compiled setup .exe.
+    value: ${{ steps.compile.outputs.installer }}
+
+runs:
+  using: composite
+  steps:
+    - name: Generate the icon
+      shell: pwsh
+      run: python packaging/make_icon.py
+
+    - name: Freeze the application
+      shell: pwsh
+      run: pyinstaller --noconfirm --clean packaging/riftrec.spec
+
+    # The failure this whole ticket exists for: a dependency the frozen build
+    # does not carry. On a participant's PC that looks like a window that never
+    # opens, with nothing on screen to explain it. Here it looks like a red run.
+    - name: Self-check the frozen build
+      shell: pwsh
+      run: |
+        $log = "$env:APPDATA\RiftRec\riftrec.log"
+        if (Test-Path $log) { Remove-Item $log -Force }
+        $p = Start-Process -FilePath dist\RiftRec\RiftRec.exe -ArgumentList selfcheck -Wait -PassThru
+        if (Test-Path $log) { Get-Content $log }
+        if ($p.ExitCode -ne 0) { throw "selfcheck failed with exit code $($p.ExitCode)" }
+
+    - name: Install Inno Setup
+      shell: pwsh
+      run: |
+        if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+          choco install innosetup -y --no-progress
+        }
+
+    # Code signing is a separate track with weeks of lead time (certificate plus
+    # an identity check of the company). When it lands, put the certificate in
+    # repository secrets and add /DSIGN /Ssigntool="..." here - nothing else in
+    # the build changes, because riftrec.iss already carries the #ifdef SIGN.
+    - name: Compile the installer
+      id: compile
+      shell: pwsh
+      run: |
+        $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+        & $iscc "/DAppVersion=${{ inputs.version }}" packaging\riftrec.iss
+        if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+        $setup = "dist/RiftRec-Setup-${{ inputs.version }}.exe"
+        if (-not (Test-Path $setup)) { throw "Expected $setup to exist" }
+        "installer=$setup" >> $env:GITHUB_OUTPUT
+        $mb = [math]::Round((Get-Item $setup).Length / 1MB, 1)
+        Write-Host "Installer: $setup ($mb MB)"

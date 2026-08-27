@@ -1,0 +1,18 @@
+# Normalise line endings, so a diff shows what actually changed.
+#
+# Without this, an edit made by a tool that writes CRLF turns a three-line
+# change into a whole-file rewrite in the diff, and a pull request review
+# becomes impossible. Everything is stored and checked out as LF.
+* text=auto eol=lf
+
+# Exceptions: cmd.exe is the one consumer that genuinely needs CRLF - a batch
+# file with LF endings can break `goto` and label parsing on some Windows
+# versions, and Start RiftRec.bat uses both.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Never touched, never diffed as text.
+*.png  binary
+*.ico  binary
+*.exe  binary
+*.sqlite binary

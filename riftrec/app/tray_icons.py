@@ -1,4 +1,9 @@
-"""Tray icon image + label per recorder state (pure, no I/O - unit-testable)."""
+"""Tray icon image per recorder state (pure, no I/O - unit-testable).
+
+Colour only. The words that go with a state live in `rte/status.py`, which
+names the reason rather than the state alone (EW-89) - keeping a second set
+of labels here is how the two would drift apart.
+"""
 
 from __future__ import annotations
 
@@ -15,22 +20,9 @@ _COLORS: dict[RecorderState, str] = {
     RecorderState.ERROR: "#8e44ad",        # purple - distinct from rec-red
 }
 
-_TITLES: dict[RecorderState, str] = {
-    RecorderState.IDLE: "RiftRec — idle",
-    RecorderState.CONNECTING: "RiftRec — connecting…",
-    RecorderState.READY: "RiftRec — ready (connected, waiting for match)",
-    RecorderState.RECORDING: "RiftRec — recording (match live)",
-    RecorderState.STOPPED: "RiftRec — stopped",
-    RecorderState.ERROR: "RiftRec — error",
-}
-
 
 def color_for(state: RecorderState) -> str:
     return _COLORS.get(state, "#9e9e9e")
-
-
-def title_for(state: RecorderState) -> str:
-    return _TITLES.get(state, "RiftRec")
 
 
 # Below this the participant should change the coin cell. Set generously: the

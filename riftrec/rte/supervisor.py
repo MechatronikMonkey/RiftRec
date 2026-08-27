@@ -38,8 +38,11 @@ from ..sources.riot import (
     extract_snapshot,
     new_events,
 )
-from ..storage.sqlite_sink import SqliteSink, append_session_note
+from ..storage.sqlite_sink import (
+    SqliteSink, append_session_note, discard_if_unused,
+)
 from .state import Observable, RecorderState
+from .status import Activity, StatusReport, classify_connect_error
 
 _ALLGAMEDATA = "/liveclientdata/allgamedata"
 
@@ -71,6 +74,13 @@ class SupervisorService:
         self._transport = transport
         self._riot_fetch = riot_fetch
         self.status = Observable(RecorderState.IDLE)
+        # Plain-language reason behind the state (EW-89). Mirrors the
+        # battery observable: the tray subscribes and renders a sentence,
+        # so an amber dot is never the only thing a participant gets.
+        self.report = Observable(StatusReport())
+        self._activity = Activity.STARTING
+        self._connect_attempts = 0
+        self.matches_recorded = 0
         self._current: Optional[_Session] = None
         self._last_session_id: Optional[str] = None
         self._session_index = config.session_index or 0
@@ -86,6 +96,42 @@ class SupervisorService:
         # replace the cell before it dies mid-study rather than after.
         self.battery = Observable(None)
         self._battery_checked_mono = 0.0
+
+    # -- status publishing (EW-89) ----------------------------------------
+
+    def _publish(
+        self,
+        state: RecorderState,
+        activity: Activity,
+        *,
+        cause: Optional[str] = None,
+    ) -> None:
+        """Set the coloured state and the sentence explaining it together.
+
+        One call for both so they cannot drift apart - a colour without a
+        reason is exactly the failure this ticket was raised for.
+        """
+        self._activity = activity
+        self.status.set(state)
+        self.report.set(StatusReport(
+            state=state,
+            activity=activity,
+            attempts=self._connect_attempts,
+            match_index=self._session_index if self._current else None,
+            cause=cause,
+        ))
+
+    # After this many consecutive failures, log only every Nth. The cause
+    # does not change between them and the tray now carries the attempt
+    # count, so 72 identical lines add nothing - but the count and the
+    # message itself stay in the log for remote diagnosis.
+    _LOG_EVERY = 10
+
+    def _log_connect_failure(self, exc: Exception) -> None:
+        n = self._connect_attempts
+        if n == 1 or n % self._LOG_EVERY == 0:
+            print(f"[warn] H10 connect failed (attempt {n}): {exc}; "
+                  f"retrying in {self._config.reconnect_backoff_s}s")
 
     # -- per-match session management (synchronous, unit-testable) --------
 
@@ -107,7 +153,7 @@ class SupervisorService:
         ))
         self._current = _Session(sink, clock, session_id)
         self._write_device_info()
-        self.status.set(RecorderState.RECORDING)
+        self._publish(RecorderState.RECORDING, Activity.RECORDING)
         return session_id
 
     def _write_device_info(self) -> None:
@@ -194,7 +240,8 @@ class SupervisorService:
             self._h10_gap_start = None
         cur.sink.close_session(datetime.now(timezone.utc).isoformat())
         self._current = None
-        self.status.set(RecorderState.READY)
+        self.matches_recorded += 1
+        self._publish(RecorderState.READY, Activity.WAITING_FOR_MATCH)
 
     # -- H10 link supervision (EW-42) -------------------------------------
 
@@ -211,8 +258,12 @@ class SupervisorService:
     def _mark_h10_up(self) -> None:
         """Link is up (first connect or reconnect): close any gap, restore state."""
         self._h10_up = True
+        self._connect_attempts = 0
         self._close_h10_gap()
-        self.status.set(RecorderState.RECORDING if self._current else RecorderState.READY)
+        if self._current is not None:
+            self._publish(RecorderState.RECORDING, Activity.RECORDING)
+        else:
+            self._publish(RecorderState.READY, Activity.WAITING_FOR_MATCH)
 
     async def _keep_h10_connected(self, transport: BleTransport) -> None:
         """Establish and keep the H10 link, retrying until it is up.
@@ -243,24 +294,33 @@ class SupervisorService:
 
         if self._h10_up:  # up -> down: a real mid-session drop
             self._h10_up = False
+            self._connect_attempts = 0
+            self._activity = Activity.STRAP_LOST
             print("[warn] H10 disconnected - HR paused, reconnecting...")
 
-        # While the link is down and a match is live, surface it as CONNECTING
-        # (HR paused) and open a gap - regardless of whether the H10 was ever up
-        # yet, so a match that started before the strap connected doesn't show a
+        # Surface the outage as CONNECTING plus the reason behind it, whether
+        # or not a match is live - a strap that is off is worth saying out loud
+        # between matches too. A live match keeps recording through it (only HR
+        # pauses) and gets a gap row, regardless of whether the H10 was ever up,
+        # so a match that started before the strap connected doesn't show a
         # green RECORDING with no HR behind it.
-        if self._current is not None:
-            if self.status.state is not RecorderState.CONNECTING:
-                self.status.set(RecorderState.CONNECTING)
-            if self._h10_gap_start is None:
-                self._h10_gap_start = datetime.now(timezone.utc).isoformat()
+        self._publish(RecorderState.CONNECTING, self._activity)
+        if self._current is not None and self._h10_gap_start is None:
+            self._h10_gap_start = datetime.now(timezone.utc).isoformat()
 
         try:
             await transport.connect(self._config.device)
             await transport.subscribe(HR_MEASUREMENT_UUID, self._on_hr)
         except Exception as exc:
-            print(f"[warn] H10 connect failed: {exc}; retrying in "
-                  f"{self._config.reconnect_backoff_s}s")
+            self._connect_attempts += 1
+            activity = classify_connect_error(str(exc))
+            # A strap that dropped mid-run keeps that wording: 'check it is
+            # still on' is different advice from 'put it on'.
+            if (activity is Activity.STRAP_NOT_FOUND
+                    and self._activity is Activity.STRAP_LOST):
+                activity = Activity.STRAP_LOST
+            self._publish(RecorderState.CONNECTING, activity, cause=str(exc))
+            self._log_connect_failure(exc)
             await asyncio.sleep(self._config.reconnect_backoff_s)
             return
 
@@ -313,7 +373,7 @@ class SupervisorService:
         # supervisor produces attributable pilot data.
         if not (self._config.participant_id or "").strip():
             print("[error] no participant id set - refusing to record (EW-41)")
-            self.status.set(RecorderState.ERROR)
+            self._publish(RecorderState.ERROR, Activity.NO_PARTICIPANT_ID)
             return
 
         transport = self._transport
@@ -326,7 +386,7 @@ class SupervisorService:
         # the connection and retries, exactly like a mid-session reconnect. So a
         # fire-and-forget start waits for the strap to be put on instead of
         # dying with ERROR if the H10 isn't worn yet (EW-42).
-        self.status.set(RecorderState.CONNECTING)
+        self._publish(RecorderState.CONNECTING, Activity.WAITING_FOR_STRAP)
 
         fetch, close = self._make_riot_fetch()
         last_flush = time.monotonic()
@@ -361,7 +421,11 @@ class SupervisorService:
                 await transport.disconnect()
             except Exception:
                 pass
-            self.status.set(RecorderState.STOPPED)
+            self._publish(RecorderState.STOPPED, Activity.STOPPED)
+            # A run that never saw a match can leave a .sqlite holding
+            # nothing. Those pile up in a participant's folder and make it
+            # impossible to tell which files are worth sending back (EW-89).
+            discard_if_unused(self._config.db_path)
 
     def _make_riot_fetch(self):
         """Return (fetch, close). With an injected fetch, close is a no-op."""

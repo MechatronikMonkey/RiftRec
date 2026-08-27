@@ -304,3 +304,103 @@ def test_battery_unknown_when_sensor_will_not_say(tmp_path) -> None:
     svc._open_session()
     asyncio.run(svc._refresh_device_info(_Mute()))
     assert svc.battery.state is None
+
+
+# -- Plain-language status + no leftover file (EW-89) ----------------------
+
+
+class _NeverTransport:
+    """A strap that is never found - the desk-drawer case that produced 72
+    silent reconnect attempts behind a single amber tray dot."""
+
+    is_connected = False
+
+    def __init__(self) -> None:
+        self.connect_calls = 0
+
+    async def connect(self, device) -> None:
+        self.connect_calls += 1
+        raise RuntimeError(
+            "No matching BLE device found. "
+            "Is the H10 worn and are the electrodes moistened?")
+
+    async def subscribe(self, uuid, callback) -> None:
+        pass
+
+    async def disconnect(self) -> None:
+        pass
+
+
+def _run_without_strap_or_match(db):
+    """Drive run() with no strap and no match, and collect what it published."""
+    stop = asyncio.Event()
+    ticks = {"n": 0}
+
+    async def fetch():
+        ticks["n"] += 1
+        if ticks["n"] >= 4:
+            stop.set()
+        return None                      # no match ever starts
+
+    svc = SupervisorService(
+        RecorderConfig(participant_id="P01", db_path=db, poll_interval_s=0.0,
+                       reconnect_backoff_s=0.0),
+        transport=_NeverTransport(), riot_fetch=fetch)
+    reports = []
+    svc.report.subscribe(reports.append)
+    asyncio.run(svc.run(stop))
+    return svc, reports
+
+
+def test_missing_strap_is_reported_in_plain_language_with_a_count(tmp_path) -> None:
+    """EW-89: the recorder knows the reason, so it has to say it - and say how
+    long it has been saying it."""
+    from riftrec.rte.state import RecorderState
+    from riftrec.rte.status import Activity
+
+    _svc, reports = _run_without_strap_or_match(tmp_path / "nostrap.sqlite")
+
+    strap = [r for r in reports if r.activity is Activity.STRAP_NOT_FOUND]
+    assert strap, [r.activity for r in reports]
+    assert strap[-1].state is RecorderState.CONNECTING
+    assert max(r.attempts for r in strap) >= 2   # the count climbs, visibly
+    assert "electrodes" in strap[-1].detail
+    assert "No matching BLE device" in (strap[-1].cause or "")
+
+
+def test_a_run_without_a_match_leaves_no_file_behind(tmp_path) -> None:
+    """EW-89: mis-starts must not litter the participant's folder."""
+    db = tmp_path / "nostrap.sqlite"
+    _run_without_strap_or_match(db)
+    assert not db.exists()
+
+
+def test_missing_participant_id_is_explained_not_just_coloured(tmp_path) -> None:
+    from riftrec.rte.state import RecorderState
+    from riftrec.rte.status import Activity
+
+    svc = SupervisorService(
+        RecorderConfig(participant_id=None, db_path=tmp_path / "untagged.sqlite"),
+        transport=_FakeTransport())
+    asyncio.run(svc.run(asyncio.Event()))
+
+    report = svc.report.state
+    assert report.state is RecorderState.ERROR
+    assert report.activity is Activity.NO_PARTICIPANT_ID
+    assert "participant ID" in report.detail
+
+
+def test_recording_report_names_the_match(tmp_path) -> None:
+    """The tray line a participant sees while a game is live."""
+    from riftrec.rte.status import Activity
+
+    svc = SupervisorService(
+        RecorderConfig(participant_id="P01", db_path=tmp_path / "live.sqlite"),
+        transport=_FakeTransport())
+    svc._open_session()
+    report = svc.report.state
+    assert report.activity is Activity.RECORDING
+    assert report.headline == "Recording match 1"
+    svc._close_session()
+    assert svc.report.state.activity is Activity.WAITING_FOR_MATCH
+    assert svc.matches_recorded == 1

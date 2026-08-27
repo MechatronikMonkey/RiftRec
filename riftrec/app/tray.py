@@ -1,12 +1,20 @@
-"""System tray icon reflecting the recorder state (EW-38).
+"""System tray icon reflecting the recorder state (EW-38, EW-89).
 
-Observes RecorderState and updates the icon colour/tooltip. Menu:
-- a disabled status line (current state)
-- "Add note…" - opens a small text prompt for a per-session note
+Observes RecorderState for the icon colour and StatusReport for the words.
+Menu:
+- two disabled lines: what is happening, and why (EW-89)
+- the strap's battery level
+- "Show status…" - the same reason in a window, also the double-click action
+- "Add note…" - a small text prompt for a per-session note
 - "Stop and exit" - stops the recorder and quits
 
-The note prompt runs tkinter in its own short-lived thread so it does not
-interfere with pystray owning the main thread.
+There is deliberately no autostart-with-Windows entry: a recording has to
+be a conscious act. The participant has to put the strap on anyway, so
+starting RiftRec belongs to the same decision - a recorder that came up
+silently at logon would be recording without anyone having chosen to.
+
+Prompt and status window run tkinter on their own short-lived threads so they do
+not interfere with pystray owning the main thread.
 """
 
 from __future__ import annotations
@@ -17,7 +25,9 @@ from typing import Callable, Optional
 import pystray
 
 from ..rte.state import Observable, RecorderState
-from .tray_icons import battery_text, make_icon, title_for
+from ..rte.status import StatusReport, tooltip_text
+from . import status_window
+from .tray_icons import battery_text, make_icon
 
 
 def _prompt_note() -> Optional[str]:
@@ -37,25 +47,32 @@ def _prompt_note() -> Optional[str]:
 
 
 class TrayController:
-    def __init__(self, status: Observable) -> None:
+    def __init__(self, status: Observable, report: Optional[Observable] = None) -> None:
         self._status = status
         self._current = status.state
+        self._report: StatusReport = StatusReport(state=self._current)
         self._on_quit: Optional[Callable[[], None]] = None
         self._on_note: Optional[Callable[[str], None]] = None
+        self._snapshot: Optional[Callable[[], dict]] = None
         self._battery: Optional[int] = None
+
+        items = [
+            pystray.MenuItem(lambda item: self._report.headline, self._noop, enabled=False),
+            pystray.MenuItem(lambda item: self._report.detail, self._noop, enabled=False),
+            pystray.MenuItem(lambda item: battery_text(self._battery), self._noop, enabled=False),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Show status…", self._show_status, default=True),
+            pystray.MenuItem("Add note…", self._add_note),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Stop and exit", self._quit),
+        ]
+
         self._icon = pystray.Icon(
-            "riftrec",
-            make_icon(self._current),
-            self._tooltip(),
-            menu=pystray.Menu(
-                pystray.MenuItem(lambda item: title_for(self._current), self._noop, enabled=False),
-                pystray.MenuItem(lambda item: battery_text(self._battery), self._noop, enabled=False),
-                pystray.Menu.SEPARATOR,
-                pystray.MenuItem("Add note…", self._add_note),
-                pystray.MenuItem("Stop and exit", self._quit),
-            ),
+            "riftrec", make_icon(self._current), self._tooltip(), menu=pystray.Menu(*items)
         )
         status.subscribe(self._on_state)
+        if report is not None:
+            report.subscribe(self._on_report)
 
     # -- wiring from the runner -------------------------------------------
     def set_on_quit(self, cb: Callable[[], None]) -> None:
@@ -64,32 +81,51 @@ class TrayController:
     def set_on_note(self, cb: Callable[[str], None]) -> None:
         self._on_note = cb
 
+    def set_status_source(self, fn: Callable[[], dict]) -> None:
+        """Supply the snapshot the status window renders."""
+        self._snapshot = fn
+
     # -- pystray callbacks ------------------------------------------------
     def _noop(self, icon=None, item=None) -> None:
         pass
 
     def _tooltip(self) -> str:
-        """Hover text: recorder state plus battery, so a glance suffices."""
-        label = title_for(self._current)
-        return label if self._battery is None else f"{label} - {battery_text(self._battery)}"
+        """Hover text: state, the reason behind it, and the battery."""
+        return tooltip_text(self._report, battery_text(self._battery))
 
-    def set_battery(self, pct: Optional[int]) -> None:
-        """Show the strap's battery level (called from the supervisor thread)."""
-        self._battery = pct
+    def _redraw(self, icon: bool = False) -> None:
+        """Push the current state to the tray. Called from worker threads."""
         try:
+            if icon:
+                self._icon.icon = make_icon(self._current)
             self._icon.title = self._tooltip()
             self._icon.update_menu()
         except Exception:
             pass  # tray not up yet, or already torn down
 
+    def set_battery(self, pct: Optional[int]) -> None:
+        """Show the strap's battery level (called from the supervisor thread)."""
+        self._battery = pct
+        self._redraw()
+
     def _on_state(self, state: RecorderState) -> None:
         self._current = state
-        try:
-            self._icon.icon = make_icon(state)
-            self._icon.title = self._tooltip()
-            self._icon.update_menu()
-        except Exception:
-            pass
+        self._redraw(icon=True)
+
+    def _on_report(self, report: StatusReport) -> None:
+        """The reason changed: new tooltip and new menu wording (EW-89)."""
+        self._report = report
+        self._redraw()
+
+    def _show_status(self, icon=None, item=None) -> None:
+        snapshot = self._snapshot
+        if snapshot is None:
+            # No supervisor attached (shouldn't happen) - still show the words
+            # we have rather than nothing at all.
+            def snapshot() -> dict:  # type: ignore[misc]
+                return {"report": self._report, "battery": battery_text(self._battery)}
+
+        status_window.show(snapshot)
 
     def _add_note(self, icon, item) -> None:
         def worker() -> None:

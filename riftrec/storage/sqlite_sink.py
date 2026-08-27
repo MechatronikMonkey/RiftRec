@@ -44,6 +44,52 @@ def unique_db_path(folder: str | Path, participant: str | None = None) -> Path:
     return candidate
 
 
+def discard_if_unused(db_path: str | Path) -> bool:
+    """Delete `db_path` when no session was ever written into it (EW-89).
+
+    A run that ends before a match starts - the usual mis-start: strap not
+    put on, game never launched - can leave a .sqlite behind that holds
+    nothing. Over weeks of a study those accumulate in the participant's
+    folder and make it impossible to tell which files are worth sending back.
+
+    Deliberately conservative: only a file that provably contains zero
+    sessions is removed. A file with sessions, an unreadable one, a locked
+    one - all are left alone. Nothing recorded is ever deleted (EW-52).
+
+    Returns True if a file was removed.
+    """
+    path = Path(db_path)
+    if not path.exists():
+        return False
+    try:
+        conn = sqlite3.connect(path, timeout=2.0)
+        try:
+            has_table = conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master "
+                "WHERE type='table' AND name='session'"
+            ).fetchone()[0]
+            if has_table:
+                sessions = conn.execute(
+                    "SELECT COUNT(*) FROM session"
+                ).fetchone()[0]
+                if sessions:
+                    return False
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return False  # cannot prove it is empty -> keep it
+    try:
+        path.unlink()
+    except OSError:
+        return False
+    for suffix in ("-wal", "-shm"):
+        try:
+            path.with_name(path.name + suffix).unlink(missing_ok=True)
+        except OSError:
+            pass
+    return True
+
+
 def append_session_note(db_path: str | Path, session_id: str, text: str) -> None:
     """Append a timestamped free-text note to a session's `notes` column.
 

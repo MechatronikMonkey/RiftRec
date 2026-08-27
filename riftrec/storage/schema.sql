@@ -115,9 +115,15 @@ CREATE TABLE IF NOT EXISTS device_info (
     battery_pct  INTEGER
 );
 
+-- Stretches where a signal was not usable. Read this before trusting an
+-- interval: an 'h10_contact' gap contains hr_bpm values that look perfectly
+-- ordinary and are not (see the note on hr_sample.contact above).
 CREATE TABLE IF NOT EXISTS gap (
     session_id TEXT    NOT NULL REFERENCES session(session_id),
-    source     TEXT    NOT NULL,        -- 'h10' | 'riot'
+    source     TEXT    NOT NULL,        -- 'h10'         BLE link down, no data at all
+                                        -- 'h10_contact' link up, strap not reading skin:
+                                        --               RR stopped while hr_bpm froze
+                                        -- 'riot'        game data unavailable
     start_utc  TEXT    NOT NULL,
     end_utc    TEXT
 );

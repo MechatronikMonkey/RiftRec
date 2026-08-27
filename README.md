@@ -31,8 +31,22 @@ goes into your own user account and adds a **RiftRec** entry to the Start menu.
 > RiftRec deliberately does **not** start itself with Windows. Recording is something you
 > start on purpose, at the same moment you put the chest strap on.
 
-Your antivirus may also complain about a program it has never seen before. If it blocks
-RiftRec, allow it — and please tell us, because that is worth knowing before the study runs.
+### If your antivirus objects
+
+RiftRec is **not code-signed yet**, so a scanner that has never seen this program may warn
+about it — or quarantine it outright, without asking. It is a false positive: the installer
+is built by GitHub Actions from the source in this repository, and every release publishes
+the SHA256 of the exact file.
+
+* **It only warns:** allow the program and carry on.
+* **RiftRec disappeared** — tray icon gone, Start-menu entry dead, nothing running: the
+  scanner quarantined it. Restore it from the quarantine, then add an exclusion for the
+  installation folder `%LOCALAPPDATA%\Programs\RiftRec`.
+* **Either way, please tell us.** This is the one failure RiftRec cannot report itself: if
+  the program has been removed, nothing is recorded and nothing says so.
+
+A signed build removes this warning; the certificate has weeks of lead time and is being
+sorted out separately.
 
 ## 2 · Pair the Polar H10 in Windows (once)
 
@@ -122,6 +136,9 @@ zero: a strap that dies mid-match costs the whole session. The value refreshes a
   the last lines say what went wrong. It's the first place to look when helping remotely.
 - **"RiftRec is already running":** only one recorder can run at a time. Check the tray for
   the existing icon.
+- **RiftRec is simply gone:** no tray icon, no Start-menu entry. Almost always the antivirus
+  — see [If your antivirus objects](#if-your-antivirus-objects). RiftRec cannot warn you
+  about this one, because it is no longer there to warn you.
 - **No file where you expected one:** a run that never recorded a match deletes its own
   (empty) `.sqlite` again, so only files with real data stay in your folder. **Show status…**
   tells you how many matches this run has recorded.
@@ -148,7 +165,7 @@ time-synchronised in *one* session:
 ```mermaid
 flowchart TD
     FE["Front-end — CLI · tray + settings GUI"]
-    RTE["RTE — RecorderRuntime / SupervisorService + SessionClock<br/>lifecycle · shared asyncio queue · session bounds · state machine"]
+    RTE["RTE — RecorderRuntime / SupervisorService + SessionClock<br/>lifecycle · shared asyncio queue · session bounds · state machine<br/>health monitor · plain-language status"]
     Fake["FakeSource<br/>synthetic, hardware-free tests"]
     H10["H10Source<br/>Polar HR/RR · 0x2A37 parser"]
     HAL["HAL — BleTransport → BleakTransport<br/>seam for the nRF52840 + Bumble dongle"]
@@ -171,9 +188,32 @@ the streams is therefore a join at analysis time — not a separate step. The HA
 the *BLE transport* (scan / connect / notify / write), not the Polar semantics: a dongle
 swaps only the host BLE stack, not the Polar GATT protocol.
 
-Package `riftrec/`: `rte/` (runtime + state + supervisor), `sources/` (fake / h10 / riot +
-`base`), `hal/` (`ble` protocol + `ble_bleak`), `storage/` (`sqlite_sink` + `schema.sql`),
-`app/` (tray + settings GUI, launcher glue), plus `clock`, `model`, `config`, `cli`.
+Package `riftrec/`: `rte/` (runtime + state + supervisor, plus `status` and `health`),
+`sources/` (fake / h10 / riot / `game_process` + `base`), `hal/` (`ble` protocol +
+`ble_bleak`), `storage/` (`sqlite_sink` + `schema.sql`), `app/` (tray, settings and status
+windows, launcher glue), plus `clock`, `model`, `config`, `cli`.
+
+### Watching for silent failure
+
+The recorder runs unattended on machines nobody is watching, so the failure that matters is
+not a crash — it is a session that looks fine and contains nothing usable. Two modules exist
+only for that:
+
+* **`rte/status.py`** — what the recorder is doing *and why*, in one place, rendered by both
+  the tray and the status window. Colour alone is not an explanation.
+* **`rte/health.py`** — pure detectors (`Signals` in, `Issue` set out; `now` is a parameter,
+  so every threshold is testable without waiting). The supervisor calls them each tick and
+  announces only the *edges*, so a persistent problem produces one notification rather than
+  one per second. Thresholds live in `health.Thresholds` and are deliberately generous: a
+  false alarm mid-game costs more trust than it saves data.
+
+`sources/game_process.py` exists for the nastiest case: the Live Client Data API going
+silent looks identical whether nobody is playing or a match is running that we cannot see.
+The presence of `League of Legends.exe` is what tells those apart.
+
+Two failure modes are **not** covered and cannot be: an antivirus removing the executable
+(the program is gone, it cannot report), and a participant never sending their files. Both
+are protocol problems — a short return cadence, not more software.
 
 ## Setup & run
 
@@ -245,6 +285,16 @@ see, which on a participant's PC looks like a window that simply never opens.
 (deduplicated by Riot `EventID`), `game_snapshot` (KDA / CS / gold trend), `gap` (dropout
 marker), plus the raw channels `hr_raw` and `game_raw`. Schema version in
 `riftrec/__init__.py:SCHEMA_VERSION`.
+
+`gap.source` says what was lost, and is worth reading before trusting a stretch of signal:
+
+| `source` | Meaning |
+|---|---|
+| `h10` | The BLE link was down — no heart rate at all for that interval. |
+| `h10_contact` | The link was up but the strap was not reading the skin: RR intervals stopped while `hr_bpm` kept reporting a **frozen** value. Everything inside such a gap must be discarded, even though it looks like ordinary data (see below). |
+
+`h10_contact` is a new *value*, not a new column, so it needs no schema version — but an
+analysis that filters on `source = 'h10'` will silently miss it.
 
 ### Raw channels — nothing is discarded at capture time
 

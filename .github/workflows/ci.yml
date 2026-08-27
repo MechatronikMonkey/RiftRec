@@ -1,9 +1,10 @@
 # Continuous integration for RiftRec.
 #
 # Runs on every pull request and on main. The two job names below - `tests` and
-# `installer` - are the required status checks configured by
-# .github/setup-branch-protection.ps1, so renaming a job means updating the
-# protection rule as well, or merges will block on a check that never reports.
+# `installer` - are the required status checks listed in
+# .github/rulesets/main.json, so renaming a job means editing that file too, or
+# merges block forever on a check that never reports. tests/test_packaging.py
+# compares the two and fails first.
 #
 # Both jobs run on every pull request without a paths filter, on purpose: a
 # required check that is skipped because a path did not match leaves the pull

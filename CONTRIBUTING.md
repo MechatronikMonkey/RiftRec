@@ -104,17 +104,44 @@ Once, by someone with admin rights, and **in this order**:
 2. Let CI run once, so GitHub has seen the check names `tests` and `installer`.
    A required check that never reports blocks merging forever, and a typo in the
    name is invisible until a pull request hangs.
-3. Apply the protection:
+3. Apply the rules. They live in the repository as importable JSON —
+   [`.github/rulesets/`](.github/rulesets/) — so the settings are versioned,
+   reviewable and restorable rather than living only in a settings page.
+
+   In the web UI: **Settings → Rules → Rulesets → New ruleset → Import a
+   ruleset**, upload `main.json`, then repeat for `release-tags.json`.
+
+   Or with the CLI, which reads exactly those files:
 
    ```powershell
    gh auth login
-   powershell -ExecutionPolicy Bypass -File .github\setup-branch-protection.ps1
+   powershell -ExecutionPolicy Bypass -File .github\setup-repo-rules.ps1
    ```
+
+   Two **rulesets**, not classic branch protection — and do not add both. One
+   branch governed by two mechanisms turns every future "why can't I merge this"
+   into an afternoon.
+
+   * **main** — pull requests only, `tests` and `installer` must pass, linear
+     history, squash-merge only, no force-push, no deletion. Repository admins
+     keep a bypass for the case where CI itself is broken.
+   * **release tags** — `v*` tags cannot be moved or deleted, by anyone. A
+     release tag is the identity of the build a participant installed, and every
+     recording stores that version in `session.app_version`; a tag that can be
+     repointed makes it impossible to say later which software produced which
+     data.
+
+   `-Evaluate` (or `"enforcement": "evaluate"` before importing) applies them in
+   report-only mode: violations show up under **Settings → Rules → Rule
+   Insights** and nothing is blocked. That is the cheap way to confirm the check
+   names are right before they can block a pull request.
 
 4. Tag the first release.
 
-To require reviews later:
-`.github\setup-branch-protection.ps1 -RequiredApprovals 1`.
+To require reviews later, change `required_approving_review_count` in
+`main.json` (or pass `-RequiredApprovals 1`) and apply again.
+[`.github/rulesets/README.md`](.github/rulesets/README.md) explains every rule
+and why it is set the way it is.
 
 ## Running things locally
 

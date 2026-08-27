@@ -21,7 +21,21 @@ SPEC = (ROOT / "packaging" / "riftrec.spec").read_text(encoding="utf-8")
 CI = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 RELEASE = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
 BUILD_ACTION = (ROOT / ".github" / "actions" / "build-installer" / "action.yml").read_text(encoding="utf-8")
-PROTECTION = (ROOT / ".github" / "setup-branch-protection.ps1").read_text(encoding="utf-8")
+RULES = (ROOT / ".github" / "setup-repo-rules.ps1").read_text(encoding="utf-8")
+RULESET_DIR = ROOT / ".github" / "rulesets"
+
+
+def _ruleset(name: str) -> dict:
+    import json
+
+    return json.loads((RULESET_DIR / name).read_text(encoding="utf-8"))
+
+
+def _rule(ruleset: dict, kind: str) -> dict:
+    """The one rule of a given type, so a missing rule fails loudly."""
+    matches = [r for r in ruleset["rules"] if r["type"] == kind]
+    assert len(matches) == 1, (kind, ruleset["name"])
+    return matches[0]
 LAUNCHER = (ROOT / "packaging" / "riftrec_launcher.py").read_text(encoding="utf-8")
 
 
@@ -185,20 +199,75 @@ def test_release_refuses_a_tag_that_disagrees_with_the_package_version() -> None
 
 
 def test_required_checks_match_the_ci_job_names() -> None:
-    """The one drift that blocks every pull request forever: branch protection
-    waiting on a status check whose job was renamed. GitHub gives no warning -
-    the PR simply never becomes mergeable."""
+    """The one drift that blocks every pull request forever: the ruleset waiting
+    on a status check whose job was renamed. GitHub gives no warning - the pull
+    request simply never becomes mergeable."""
     import re
 
-    declared = re.search(r'\$checks\s*=\s*@\(([^)]*)\)', PROTECTION)
-    assert declared, "could not find the required-checks list in the protection script"
-    required = re.findall(r'"([^"]+)"', declared.group(1))
+    checks = _rule(_ruleset("main.json"), "required_status_checks")
+    required = [c["context"]
+                for c in checks["parameters"]["required_status_checks"]]
     assert required, required
 
     jobs_block = CI.split("jobs:", 1)[1]
     job_names = set(re.findall(r'^  ([a-zA-Z][\w-]*):$', jobs_block, re.MULTILINE))
     for check in required:
         assert check in job_names, (check, sorted(job_names))
+
+
+def test_main_takes_no_direct_pushes_and_keeps_a_linear_history() -> None:
+    main = _ruleset("main.json")
+    assert main["target"] == "branch"
+    assert main["conditions"]["ref_name"]["include"] == ["~DEFAULT_BRANCH"]
+    for kind in ("deletion", "non_fast_forward", "required_linear_history",
+                 "pull_request", "required_status_checks"):
+        _rule(main, kind)
+    checks = _rule(main, "required_status_checks")["parameters"]
+    assert checks["strict_required_status_checks_policy"] is True
+
+
+def test_the_settings_live_in_the_repository_not_in_the_script() -> None:
+    """The rules are importable JSON so they can be diffed and restored; the
+    script only uploads them, and the web UI can do the same by hand."""
+    assert "rulesets" in RULES
+    assert "ConvertFrom-Json" in RULES
+    assert '$checks = @(' not in RULES     # no second copy of the check names
+
+
+def test_release_tags_cannot_be_moved_or_deleted() -> None:
+    """A release tag is the identity of the build a participant installed, and
+    every recording stores that version in session.app_version. A tag that can
+    be repointed makes it impossible to say later which software produced which
+    data - and the study only runs once."""
+    tags = _ruleset("release-tags.json")
+    assert tags["target"] == "tag"
+    assert tags["conditions"]["ref_name"]["include"] == ["refs/tags/v*"]
+    for kind in ("deletion", "update", "non_fast_forward"):
+        _rule(tags, kind)
+    assert tags["bypass_actors"] == []       # nobody, not even an admin
+
+
+def test_no_review_requirement_while_the_project_is_one_person() -> None:
+    """GitHub does not allow approving your own pull request, so a review
+    requirement would block every merge for a solo maintainer. The structure is
+    in place either way; this number is the only thing that changes."""
+    params = _rule(_ruleset("main.json"), "pull_request")["parameters"]
+    assert params["required_approving_review_count"] == 0
+    assert params["allowed_merge_methods"] == ["squash"]
+
+
+def test_admins_keep_a_way_through_if_ci_itself_breaks() -> None:
+    bypass = _ruleset("main.json")["bypass_actors"]
+    assert bypass, "no emergency route out of a broken CI"
+    assert all(a["actor_type"] == "RepositoryRole" for a in bypass), bypass
+
+
+def test_every_ruleset_is_valid_json_and_enforced() -> None:
+    for path in RULESET_DIR.glob("*.json"):
+        ruleset = _ruleset(path.name)
+        assert ruleset["name"], path
+        assert ruleset["target"] in ("branch", "tag"), path
+        assert ruleset["enforcement"] == "active", path
 
 
 def test_ci_runs_on_every_pull_request_without_a_path_filter() -> None:

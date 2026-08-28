@@ -105,7 +105,8 @@ jobs:
             Windows shows **"Windows protected your PC"** because this build is not
             code-signed yet: **More info → Run anyway**. Your antivirus may also flag a
             program it has never seen before — if it blocks RiftRec, allow it, and please
-            say so.
+            say so. Some scanners sandbox the installer first, so it can take a while to
+            start or appear **twice**; clicking through both is harmless.
 
             RiftRec does **not** start with Windows. Put the chest strap on, then start it
             from the Start menu — recording is meant to be a deliberate act.

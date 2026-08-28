@@ -38,6 +38,11 @@ about it — or quarantine it outright, without asking. It is a false positive: 
 is built by GitHub Actions from the source in this repository, and every release publishes
 the SHA256 of the exact file.
 
+* **The installer takes a long time to appear, or runs twice.** Some scanners
+  run an unknown program in a sandbox first and only let it through once it has
+  behaved. You then see the setup window twice — once for the sandboxed run,
+  once for the real one. Harmless: the second run installs over the first, and
+  nothing you have recorded is touched. Just click through both.
 * **It only warns:** allow the program and carry on.
 * **RiftRec disappeared** — tray icon gone, Start-menu entry dead, nothing running: the
   scanner quarantined it. Restore it from the quarantine, then add an exclusion for the

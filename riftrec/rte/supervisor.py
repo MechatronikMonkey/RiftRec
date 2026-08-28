@@ -130,6 +130,7 @@ class SupervisorService:
         self._match_started_mono: Optional[float] = None
         self._league_running: Optional[bool] = None
         self._league_checked_mono: Optional[float] = None
+        self._league_up_since: Optional[float] = None
         self._storage_error: Optional[str] = None
         self._contact_gap_start: Optional[str] = None
         # Set by the runner to the tray's notifier: these situations lose data
@@ -329,6 +330,7 @@ class SupervisorService:
                 match_started=self._match_started_mono,
                 strap_connected=self._h10_up,
                 league_running=self._league_state(now),
+                league_up_since=self._league_up_since,
                 storage_error=self._storage_error,
                 battery_pct=self.battery.state,
             ),
@@ -356,11 +358,19 @@ class SupervisorService:
         )
         if due:
             self._league_checked_mono = now
+            was = self._league_running
             try:
                 self._league_running = self._game_probe()
             except Exception as exc:  # never let a process listing matter
                 print(f"[warn] could not check for the game process: {exc}")
                 self._league_running = None
+            # `League of Legends.exe` is the match process: one per game. Stamp
+            # when it appeared so the health check can ask "has any game data
+            # arrived since *this* game started?" rather than "recently?".
+            if self._league_running and not was:
+                self._league_up_since = now
+            elif not self._league_running:
+                self._league_up_since = None
         return self._league_running
 
     def _on_issue(self, issue: Issue, raised: bool) -> None:

@@ -23,6 +23,11 @@ T = Thresholds()
 NOW = 10_000.0
 
 
+def t_up() -> float:
+    """Long enough for the game to count as blind."""
+    return T.game_silence_s + 1
+
+
 def test_healthy_match_reports_nothing() -> None:
     assert active_issues(Signals(
         now=NOW, match_live=True, match_started=NOW - 600,
@@ -92,20 +97,53 @@ def test_contact_is_not_questioned_while_no_heart_rate_arrives_at_all() -> None:
 def test_league_running_without_game_data_is_flagged() -> None:
     """The scariest one: the tray says "ready, waiting for a match" while
     matches are being played. Nothing else distinguishes it from idling."""
-    s = Signals(now=NOW, match_live=False, league_running=True, last_game_data=None)
+    s = Signals(now=NOW, match_live=False, league_running=True,
+                league_up_since=NOW - t_up(), last_game_data=None)
     assert Issue.GAME_NOT_VISIBLE in active_issues(s)
 
 
 def test_league_just_started_is_given_time() -> None:
     """`League of Legends.exe` is up during loading, before the API answers."""
     s = Signals(now=NOW, match_live=False, league_running=True,
-                last_game_data=NOW - 10)
+                league_up_since=NOW - 10, last_game_data=None)
     assert active_issues(s) == set()
+
+
+def test_the_end_of_game_screen_does_not_raise_a_false_alarm() -> None:
+    """The regression from 28.08.2026. After a match the game process lingers
+    on the end-of-game screen while the API has already stopped answering, so
+    the old "no data recently?" rule fired two minutes later and told a player
+    who had just been recorded perfectly that nothing was being recorded.
+
+    The question is per game process: has data arrived since *this* game
+    started? Here it has.
+    """
+    s = Signals(now=NOW, match_live=False, league_running=True,
+                league_up_since=NOW - 1800,      # process up since before the match
+                last_game_data=NOW - 300)        # data flowed during the match
+    assert active_issues(s) == set()
+
+
+def test_a_blind_second_game_is_still_caught() -> None:
+    """`League of Legends.exe` is one process per match, so a new game gets a
+    fresh judgement - the data from the previous match does not vouch for it."""
+    s = Signals(now=NOW, match_live=False, league_running=True,
+                league_up_since=NOW - t_up(),    # new process, this game
+                last_game_data=NOW - 1800)       # last data was the game before
+    assert Issue.GAME_NOT_VISIBLE in active_issues(s)
 
 
 def test_unknown_game_state_stays_quiet() -> None:
     """If the process list could not be read, we do not guess."""
     s = Signals(now=NOW, match_live=False, league_running=None, last_game_data=None)
+    assert active_issues(s) == set()
+
+
+def test_a_running_game_we_never_stamped_stays_quiet() -> None:
+    """Without a start time there is nothing to measure against, and guessing
+    would mean alarming on the very first tick after RiftRec starts."""
+    s = Signals(now=NOW, match_live=False, league_running=True,
+                league_up_since=None, last_game_data=None)
     assert active_issues(s) == set()
 
 

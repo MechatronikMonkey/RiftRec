@@ -117,3 +117,29 @@ def test_tooltip_keeps_the_reason_when_the_battery_would_crowd_it_out() -> None:
     assert long_battery not in text
     assert "electrodes" in text
     assert len(text) <= TOOLTIP_LIMIT
+
+
+# -- the facts block in the status window ---------------------------------
+
+def test_the_battery_line_is_not_labelled_twice() -> None:
+    """battery_text() already reads "Battery: 100%"; prefixing it produced
+    "Strap battery: Battery: 100%" in the window a participant is asked to open.
+    """
+    from riftrec.app.status_window import _facts_text
+
+    line = [l for l in _facts_text({"battery": "Battery: 100%"}).splitlines()
+            if "attery" in l]
+    assert line == ["Strap battery: 100%"], line
+
+
+def test_the_battery_line_keeps_its_warning() -> None:
+    from riftrec.app.status_window import _facts_text
+
+    text = _facts_text({"battery": "Battery: 22% - replace soon"})
+    assert "Strap battery: 22% - replace soon" in text
+
+
+def test_an_unknown_battery_still_reads_as_a_sentence() -> None:
+    from riftrec.app.status_window import _facts_text
+
+    assert "Strap battery: unknown" in _facts_text({})

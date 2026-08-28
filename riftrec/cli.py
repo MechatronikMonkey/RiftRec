@@ -31,6 +31,7 @@ _RUNTIME_MODULES = (
     "riftrec.app.runner", "riftrec.app.tray", "riftrec.app.tray_icons",
     "riftrec.app.settings_window", "riftrec.app.status_window",
     "riftrec.app.prefs", "riftrec.app.device_scan", "riftrec.app.single_instance",
+    "riftrec.app.reveal",
     "riftrec.rte.supervisor", "riftrec.rte.runtime", "riftrec.rte.status",
     "riftrec.rte.state", "riftrec.rte.health",
     "riftrec.sources.h10", "riftrec.sources.riot", "riftrec.sources.game_process",

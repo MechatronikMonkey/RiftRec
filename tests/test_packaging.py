@@ -190,6 +190,22 @@ def test_both_workflows_run_the_test_suite() -> None:
     assert "pytest tests/" in RELEASE
 
 
+def test_the_two_workflows_pin_the_same_action_versions() -> None:
+    """One workflow bumped and the other forgotten is how a release starts
+    failing on a runner change, months after CI stopped warning about it."""
+    import re
+
+    def used(workflow: str) -> dict:
+        return dict(re.findall(r"uses:\s*([\w.-]+/[\w.-]+)@(v[\w.]+)", workflow))
+
+    ci, release = used(CI), used(RELEASE)
+    assert ci, "no versioned actions found in ci.yml"
+    shared = set(ci) & set(release)
+    assert shared, "the two workflows share no actions at all - one is misparsed"
+    for action in sorted(shared):
+        assert ci[action] == release[action], (action, ci[action], release[action])
+
+
 def test_release_refuses_a_tag_that_disagrees_with_the_package_version() -> None:
     """Every recording stores app_version, so a mislabelled installer makes it
     impossible to tell later which build produced which data."""

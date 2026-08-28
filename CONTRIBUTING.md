@@ -43,7 +43,7 @@ gh pr create --fill                    # or open it in the web UI
 ```
 
 **Branch names:** `ew-<number>-<short-description>` when a Jira ticket exists,
-otherwise `feat/`, `fix/` or `docs/` plus a short description.
+otherwise `feat/`, `fix/`, `docs/` or `chore/` plus a short description.
 
 **Commit messages** follow the existing history — conventional commits with a
 scope, and a body that says *why*:

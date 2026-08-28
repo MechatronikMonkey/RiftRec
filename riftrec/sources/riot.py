@@ -106,9 +106,20 @@ def build_pseudonym_map(data: dict, salt: str) -> dict[str, str]:
     own = _name_variants(data.get("activePlayer") or {}) | _name_variants(_find_active_row(data))
     mapping: dict[str, str] = {}
     for player in data.get("allPlayers") or []:
-        for name in _name_variants(player):
-            if name not in own:
-                mapping[name] = _pseudonym(salt, name)
+        variants = _name_variants(player) - own
+        if not variants:
+            continue
+        # ONE pseudonym per person, shared by every spelling of their name.
+        # Hashing each variant separately gave the same player a different id
+        # in game_raw (which carries `riotId`, "Name#TAG") than in game_event
+        # (whose Assisters carry the bare game name), so an assist could not be
+        # matched to the scoreboard row of the player who made it. That linkage
+        # cannot be repaired afterwards: the salt is session-local and the
+        # plaintext is never stored.
+        key = player.get("riotId") or min(variants)
+        pseudo = _pseudonym(salt, key)
+        for name in variants:
+            mapping[name] = pseudo
     return mapping
 
 

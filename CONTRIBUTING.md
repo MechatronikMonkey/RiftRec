@@ -96,6 +96,13 @@ The version matters beyond the file name: every recording stores it in
 `session.app_version`, so a mislabelled installer makes it impossible to tell
 later which build produced which data. That is why the tag check exists.
 
+**What the numbers mean during the pilot.** `0.1.x` is the internal test line:
+one experienced player records with it and reports back, and everything that
+comes out of that is `0.1.1`, `0.1.2`, and so on. The first version handed to
+actual participants is **`0.2.0`**. The rule behind it: nothing reaches somebody
+we cannot walk through a problem with until it has survived full sessions on a
+machine that is not ours.
+
 ## First-time repository setup
 
 Once, by someone with admin rights, and **in this order**:

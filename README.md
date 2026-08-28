@@ -38,6 +38,11 @@ about it — or quarantine it outright, without asking. It is a false positive: 
 is built by GitHub Actions from the source in this repository, and every release publishes
 the SHA256 of the exact file.
 
+* **The installer takes a long time to appear, or runs twice.** Some scanners
+  run an unknown program in a sandbox first and only let it through once it has
+  behaved. You then see the setup window twice — once for the sandboxed run,
+  once for the real one. Harmless: the second run installs over the first, and
+  nothing you have recorded is touched. Just click through both.
 * **It only warns:** allow the program and carry on.
 * **RiftRec disappeared** — tray icon gone, Start-menu entry dead, nothing running: the
   scanner quarantined it. Restore it from the quarantine, then add an exclusion for the
@@ -101,8 +106,10 @@ automatically.
 the top two lines say what RiftRec is doing *and why* in plain words — for example
 *"Chest strap not found — put the H10 on and moisten the electrodes, then give it a moment;
 RiftRec keeps trying (attempt 12)."* **Show status…** (or a double-click on the icon) opens
-the same thing in a window, together with the folder your recordings are going to. The rest
-of the menu is *Add note…* and *Stop and exit*.
+the same thing in a window, together with the folder your recordings are going to.
+**Open data folder** opens that folder in Explorer with the current recording already
+selected — that is the one you attach to your email. The rest of the menu is *Add note…*
+and *Stop and exit*.
 
 **And it speaks up by itself.** Some problems look exactly like everything working — the app
 is running, the icon is there, you are playing, and nothing is being recorded. When RiftRec
@@ -149,9 +156,11 @@ zero: a strap that dies mid-match costs the whole session. The value refreshes a
   (`127.0.0.1:2999`). An overlay, a firewall or a VPN is the usual cause. Nothing is being
   recorded while this shows, so please report it rather than playing on.
 
-**Send your files early.** Send the first recording right after your first session rather
-than collecting them — if something is silently not working, that is how we find out in a
-day instead of at the end of the study, when those games can no longer be replayed.
+**Send your files early.** Right-click the tray icon → **Open data folder**, and the file
+is right there, already selected. Send the first recording straight after your first
+session rather than collecting them up — if something is silently not working, that is how
+we find out in a day instead of at the end of the study, when those games can no longer be
+replayed.
 
 ---
 

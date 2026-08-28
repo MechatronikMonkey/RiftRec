@@ -24,6 +24,7 @@ from typing import Callable, Optional
 
 import pystray
 
+from .reveal import open_location
 from ..rte.health import Issue, notification_for
 from ..rte.state import Observable, RecorderState
 from ..rte.status import StatusReport, tooltip_text
@@ -63,6 +64,7 @@ class TrayController:
             pystray.MenuItem(lambda item: battery_text(self._battery), self._noop, enabled=False),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Show status…", self._show_status, default=True),
+            pystray.MenuItem("Open data folder", self._open_folder),
             pystray.MenuItem("Add note…", self._add_note),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Stop and exit", self._quit),
@@ -141,6 +143,15 @@ class TrayController:
                 return {"report": self._report, "battery": battery_text(self._battery)}
 
         status_window.show(snapshot)
+
+    def _open_folder(self, icon=None, item=None) -> None:
+        """Show the recordings in Explorer, with the current file selected.
+
+        The last step of every session is sending the file back, and a
+        participant should not have to remember a path they picked weeks ago.
+        """
+        data = self._status_source() if self._status_source else {}
+        open_location(data.get("db_path"))
 
     def _add_note(self, icon, item) -> None:
         def worker() -> None:

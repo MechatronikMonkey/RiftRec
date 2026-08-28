@@ -573,10 +573,13 @@ def test_league_running_while_the_api_stays_silent_is_announced(tmp_path) -> Non
             stop.set()
         return None                      # the API never answers
 
+    from riftrec.rte.health import Thresholds
+
     svc = SupervisorService(
         RecorderConfig(participant_id="P01", db_path=db, poll_interval_s=0.0,
                        reconnect_backoff_s=0.0, league_poll_s=0.0),
-        transport=_FakeTransport(), riot_fetch=fetch, game_probe=lambda: True)
+        transport=_FakeTransport(), riot_fetch=fetch, game_probe=lambda: True,
+        thresholds=Thresholds(game_silence_s=0.0))
     alerts = []
     svc.on_alert = lambda issue, raised: alerts.append((issue, raised))
 

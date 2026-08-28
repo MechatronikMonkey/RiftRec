@@ -95,6 +95,7 @@ class Signals:
     match_started: Optional[float] = None    # so a fresh match is given time
     strap_connected: bool = True             # False while the BLE link is down
     league_running: Optional[bool] = None    # None = could not be determined
+    league_up_since: Optional[float] = None  # when this game process appeared
     storage_error: Optional[str] = None
     battery_pct: Optional[int] = None
 
@@ -116,11 +117,24 @@ def active_issues(s: Signals, t: Thresholds = Thresholds()) -> set[Issue]:
 
     # Only meaningful between matches: while a match is being recorded we are
     # obviously receiving game data.
+    #
+    # Judged per game process, not per wall clock. `League of Legends.exe` is
+    # the match process - it starts for a game and exits afterwards - so "has
+    # any game data arrived since this process appeared?" is the right question.
+    # Asking only "has data arrived recently?" produced a false alarm on the
+    # end-of-game screen (verified 28.08.2026): the process lingers there while
+    # the API has already stopped answering, and two minutes later a player who
+    # had just been recorded perfectly was told nothing was being recorded.
+    # A participant who learns to ignore these is worse off than one who never
+    # got them.
     if not s.match_live and s.league_running:
-        blind = _silent_for(s.last_game_data, None, s.now)
-        if blind is None or blind >= t.game_silence_s:
-            # `None` means no game data has ever arrived in this run, which is
-            # exactly the case worth shouting about once League is up.
+        up_for = _silent_for(s.league_up_since, None, s.now)
+        seen_this_game = (
+            s.last_game_data is not None
+            and s.league_up_since is not None
+            and s.last_game_data >= s.league_up_since
+        )
+        if up_for is not None and up_for >= t.game_silence_s and not seen_this_game:
             issues.add(Issue.GAME_NOT_VISIBLE)
 
     # A dropped BLE link is not a health issue - the link supervisor already

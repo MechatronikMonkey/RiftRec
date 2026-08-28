@@ -220,3 +220,39 @@ if __name__ == "__main__":
             fn()
             print(f"OK - {name}")
     print("OK - all raw/pseudonymisation tests passed")
+
+
+def test_one_pseudonym_per_person_across_every_spelling() -> None:
+    """The regression from the 28.08. test match: `riotId` ("Rival#EUW") and
+    `riotIdGameName` ("Rival") were hashed separately, so the same player
+    appeared as one pseudonym in game_raw and a different one in game_event -
+    whose Assisters carry the bare game name. An assist could then not be
+    matched to the scoreboard row of the player who made it, and that linkage
+    cannot be repaired afterwards: the salt is session-local and the plaintext
+    is never stored.
+    """
+    mapping = build_pseudonym_map(_frame(), salt="s")
+    ids = {mapping[name] for name in ("Rival", "Rival#EUW")}
+    assert len(ids) == 1, mapping
+
+
+def test_event_payloads_and_scoreboard_agree_on_the_same_player() -> None:
+    """End to end: the two channels have to name the same person the same way."""
+    data = _frame()
+    mapping = build_pseudonym_map(data, salt="s")
+
+    scoreboard = apply_pseudonyms(data, mapping)["allPlayers"][1]["riotId"]
+    event = apply_pseudonyms(
+        {"EventName": "ChampionKill", "KillerName": "Rival", "Assisters": ["Rival"]},
+        mapping,
+    )
+    assert event["KillerName"] == scoreboard
+    assert event["Assisters"] == [scoreboard]
+
+
+def test_the_recording_player_is_still_never_pseudonymised() -> None:
+    """Guard against the fix over-reaching: RiftLab splits own from enemy
+    events on this name."""
+    mapping = build_pseudonym_map(_frame(), salt="s")
+    for spelling in ("Me", "Me#EUW"):
+        assert spelling not in mapping

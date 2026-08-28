@@ -146,7 +146,9 @@ def _facts_text(data: dict) -> str:
     report: StatusReport = data.get("report") or StatusReport()
     lines = [
         f"Participant: {data.get('participant') or '—'}",
-        f"Strap battery: {data.get('battery') or 'unknown'}",
+        # battery_text() already reads "Battery: 100%" - prefixing it again
+        # produced "Strap battery: Battery: 100%" in the window.
+        f"Strap {(data.get('battery') or 'battery: unknown').lower()}",
         f"Matches recorded this run: {data.get('matches', 0)}",
         f"Saving to: {data.get('db_path') or '—'}",
     ]

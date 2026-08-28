@@ -29,6 +29,13 @@ Prerequisites: Python 3.12 and [Inno Setup 6](https://jrsoftware.org/isdl.php)
 (`winget install JRSoftware.InnoSetup`). Without Inno Setup the script stops after step 4
 and leaves the frozen folder; `-SkipInstaller` does the same on purpose.
 
+**Expect the antivirus to interrupt.** Every build produces a brand-new, unsigned
+executable, which is exactly what on-access scanners are built to distrust. The build or
+the first launch of `RiftRec.exe` can freeze for a few seconds while it is inspected and
+then carry on normally; build times swing accordingly. If it gets in the way, exclude the
+`dist/` folder on the development machine - but never suggest that to a participant, where
+the scanner's verdict is the information we actually want.
+
 ## Why it is built this way
 
 **One folder, not one file.** A PyInstaller `--onefile` build unpacks its whole runtime

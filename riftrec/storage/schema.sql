@@ -9,17 +9,28 @@
 
 CREATE TABLE IF NOT EXISTS session (
     session_id     TEXT    PRIMARY KEY,
-    participant_id TEXT,                 -- pseudonymous; NULL in the demo, mandatory in the pilot (EW-41)
-    session_index  INTEGER,              -- consecutive session no. per participant (EW-41)
+    participant_id TEXT,                 -- the participant's Riot name (register D6) - plain
+                                          -- text until pseudonymised on intake (D7); NULL in
+                                          -- the demo, mandatory in the pilot (EW-41)
+    session_index  INTEGER,              -- consecutive match no. per participant (EW-41);
+                                          -- NULL for kind = 'idle'
     started_utc    TEXT    NOT NULL,      -- ISO-8601 UTC
     ended_utc      TEXT,                 -- NULL until close_session
     mono_anchor_ns INTEGER NOT NULL,     -- perf_counter_ns at started_utc
     app_version    TEXT    NOT NULL,
     schema_version INTEGER NOT NULL,
     notes          TEXT,
-    active_riot_id TEXT                  -- Riot Name#TAG of the recording player, captured
+    active_riot_id TEXT,                 -- Riot Name#TAG of the recording player, captured
                                           -- from the Live Client API; used by RiftLab to
                                           -- split kill/death/assist from enemy events.
+    kind           TEXT,                 -- 'match' or 'idle' (schema 5). Heart rate is
+                                          -- recorded from the moment the strap connects;
+                                          -- the stretches between matches (lobby, champ
+                                          -- select, loading screen, post-game) are their
+                                          -- own rows with kind = 'idle' and no game_* rows.
+                                          -- NULL in files before schema 5 = 'match'.
+    utc_offset_min INTEGER               -- local UTC offset at started_utc, minutes east
+                                          -- of UTC (EW-101): time of day for the analysis
 );
 
 CREATE TABLE IF NOT EXISTS hr_sample (
@@ -126,6 +137,40 @@ CREATE TABLE IF NOT EXISTS gap (
                                         -- 'riot'        game data unavailable
     start_utc  TEXT    NOT NULL,
     end_utc    TEXT
+);
+
+-- Daily check-in (schema 5): a short questionnaire on the confounders the
+-- study controls for, followed by a 60 s resting measurement. Offered the
+-- first time on a study day the strap delivers beats and no match is live;
+-- if closed unanswered, once more after the next match; the tray can open it
+-- any time. So a day can have several rows - the analysis picks the first
+-- submitted one, and only a resting window before the day's first match is
+-- rest. Any single answer may be NULL: participants may skip questions. The heart rate is not stored here - it is
+-- in hr_sample / rr_interval of the session that was running, so the resting
+-- window is simply [rest_start_utc, rest_end_utc] on that time axis.
+-- Answer codes are defined in riftrec/app/checkin_questions.py.
+CREATE TABLE IF NOT EXISTS checkin (
+    checkin_id            TEXT PRIMARY KEY,
+    session_id            TEXT REFERENCES session(session_id), -- running when it opened
+    participant_id        TEXT,
+    questionnaire_version INTEGER NOT NULL,
+    opened_utc            TEXT NOT NULL,
+    submitted_utc         TEXT,      -- NULL = closed without answering
+    utc_offset_min        INTEGER,
+    sleep_quality         INTEGER,   -- 1..5, last main sleep, 3 = normal for you
+    sleep_hours           INTEGER,   -- 4 means <= 4, 10 means >= 10
+    alcohol               TEXT,      -- last 24 h: 'none' '1-2' '3-4' '5+'
+    caffeine              TEXT,      -- last 3 h:  '0' '1' '2' '3+'
+    nicotine              TEXT,      -- last 1 h:  'no' 'yes'
+    last_meal             TEXT,      -- '<1h' '1-3h' '>3h'
+    exercise              TEXT,      -- last 24 h, hardest: 'none' 'light' 'moderate' 'hard'
+    exercise_ended        TEXT,      -- '<2h' '2-6h' '>6h'; NULL when exercise = 'none'
+    ill                   TEXT,      -- 'no' 'a_bit' 'yes'
+    feeling               INTEGER,   -- 1..5, 3 = normal for you
+    adhd_medication       TEXT,      -- since waking up: 'no' 'yes' 'never'
+    rest_status           TEXT,      -- 'completed' 'skipped' 'aborted'; NULL = not reached
+    rest_start_utc        TEXT,
+    rest_end_utc          TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_hr_sample_session   ON hr_sample(session_id, mono_ns);

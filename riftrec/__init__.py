@@ -7,14 +7,18 @@ sources write under one session_id on a shared clock into the same DB; the
 "merge" is therefore a join at analysis time rather than a separate step.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # Version of the SQLite session schema (= contract between RiftRec and RiftLab).
 # Increment on every incompatible schema change.
 #
+# 5 (EW-65/EW-99/EW-101): heart rate is recorded continuously from strap
+#            connect - between-match stretches are sessions with kind='idle'.
+#            session.kind / utc_offset_min, and the daily `checkin` table
+#            (questionnaire + 60 s resting measurement).
 # 4 (EW-61): game_snapshot.is_dead / respawn_timer_s - the death timer at 5 s
 #            resolution, which the 30 s raw cadence cannot deliver.
 # 3 (EW-86): device_info table - which strap, which firmware, what battery.
 # 2 (EW-86): raw channels `hr_raw` and `game_raw` plus `hr_sample.contact`.
 #            Additive only - RiftLab keeps reading version 1 files unchanged.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5

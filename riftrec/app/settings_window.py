@@ -18,7 +18,9 @@ from ..config import RecorderConfig
 from ..storage.sqlite_sink import (
     looks_like_cloud_folder, probe_folder_writable, unique_db_path,
 )
-from .prefs import Prefs, load_prefs, save_prefs
+from dataclasses import replace
+
+from .prefs import load_prefs, save_prefs
 from .device_scan import scan_polar_devices
 
 
@@ -57,7 +59,7 @@ class _SettingsDialog:
         self._device_var = tk.StringVar()
 
         r = 0
-        ttk.Label(frm, text="Participant ID *").grid(row=r, column=0, sticky="w", pady=3)
+        ttk.Label(frm, text="Riot name *").grid(row=r, column=0, sticky="w", pady=3)
         ttk.Entry(frm, textvariable=self._participant, width=32).grid(row=r, column=1, columnspan=2, sticky="we")
 
         r += 1
@@ -159,7 +161,7 @@ class _SettingsDialog:
         # be attributed to a player. Block the run and keep the dialog open.
         participant = self._participant.get().strip()
         if not participant:
-            self._error.set("Participant ID is required (the player's pseudonymous study code).")
+            self._error.set("Riot name is required (Name#TAG, as you play under it).")
             return
         try:
             session = int(self._session.get()) if self._session.get().strip() else 0
@@ -187,8 +189,10 @@ class _SettingsDialog:
             return
         db = unique_db_path(folder, participant)
 
-        # Remember participant + folder for next time (EW-43).
-        save_prefs(Prefs(participant_id=participant, storage_folder=folder))
+        # Remember participant + folder for next time (EW-43). Starts from the
+        # saved prefs so the check-in bookkeeping in the same file survives.
+        save_prefs(replace(load_prefs(), participant_id=participant,
+                           storage_folder=folder))
 
         self.result = RecorderConfig(
             participant_id=participant,

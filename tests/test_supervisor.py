@@ -122,7 +122,8 @@ def test_two_matches_accumulate_in_one_file_with_notes() -> None:
         assert svc.add_note("felt tilted after that gank") is True
         svc._close_session()
 
-        # Between matches: HR is discarded (no open session)
+        # Between matches with no idle session open (the watch loop is not
+        # driven here, and only it opens one): the sample has nowhere to go
         svc._on_hr(_hr(70))
         # A note between matches attaches to the just-finished session
         assert svc.add_note("post-game: bad connection") is True
@@ -146,7 +147,7 @@ def test_two_matches_accumulate_in_one_file_with_notes() -> None:
             assert sessions[0][3] == "P"
             assert sessions[1][3] is None
 
-            # HR: one per match; the between-match sample was discarded -> 2 total
+            # HR: one per match; the sample with no session open went nowhere
             (hr_total,) = conn.execute("SELECT COUNT(*) FROM hr_sample").fetchone()
             assert hr_total == 2
             (hr1,) = conn.execute("SELECT COUNT(*) FROM hr_sample WHERE session_id=?", (sid1,)).fetchone()
@@ -387,7 +388,7 @@ def test_missing_participant_id_is_explained_not_just_coloured(tmp_path) -> None
     report = svc.report.state
     assert report.state is RecorderState.ERROR
     assert report.activity is Activity.NO_PARTICIPANT_ID
-    assert "participant ID" in report.detail
+    assert "Riot name" in report.detail
 
 
 def test_recording_report_names_the_match(tmp_path) -> None:
@@ -586,7 +587,15 @@ def test_league_running_while_the_api_stays_silent_is_announced(tmp_path) -> Non
     asyncio.run(svc.run(stop))
 
     assert (Issue.GAME_NOT_VISIBLE, True) in alerts
-    assert not db.exists()               # nothing recorded -> no leftover file
+    # No match was seen, but the strap was on: its beats are kept as an idle
+    # stretch (schema 5), so the file stays - with no match in it.
+    conn = sqlite3.connect(db)
+    try:
+        kinds = [k for (k,) in conn.execute("SELECT kind FROM session")]
+    finally:
+        conn.close()
+    assert kinds == ["idle"]
+    assert svc.matches_recorded == 0
 
 
 def test_no_alarm_when_nobody_is_playing(tmp_path) -> None:

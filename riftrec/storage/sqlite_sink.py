@@ -14,8 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..model import (
-    DeviceInfo, Gap, GameEvent, GameRaw, GameSnapshot, HrRaw, HrSample, Record,
-    RrInterval, SessionMeta,
+    Checkin, DeviceInfo, Gap, GameEvent, GameRaw, GameSnapshot, HrRaw, HrSample,
+    Record, RrInterval, SessionMeta,
 )
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
@@ -109,6 +109,16 @@ def discard_if_unused(db_path: str | Path) -> bool:
                 ).fetchone()[0]
                 if sessions:
                     return False
+            # A check-in opened from the tray before the strap connected
+            # writes its row into a file without sessions - keep it.
+            has_checkin = conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master "
+                "WHERE type='table' AND name='checkin'"
+            ).fetchone()[0]
+            if has_checkin and conn.execute(
+                "SELECT COUNT(*) FROM checkin"
+            ).fetchone()[0]:
+                return False
         finally:
             conn.close()
     except sqlite3.Error:
@@ -123,6 +133,54 @@ def discard_if_unused(db_path: str | Path) -> bool:
         except OSError:
             pass
     return True
+
+
+# The answer columns of `checkin`, in schema order. The questionnaire
+# (app/checkin_questions.py) uses exactly these ids; a test keeps both in step.
+CHECKIN_ANSWER_COLUMNS = (
+    "sleep_quality", "sleep_hours", "alcohol", "caffeine", "nicotine",
+    "last_meal", "exercise", "exercise_ended", "ill", "feeling",
+    "adhd_medication",
+)
+
+
+def write_checkin(db_path: str | Path, checkin: Checkin) -> None:
+    """Insert or update one check-in row (schema 5).
+
+    Called from the check-in window's thread, so it uses its own short-lived
+    connection like `append_session_note` - WAL lets it write next to the
+    recorder's open connection. Called twice per check-in (answers, then the
+    resting window); the second call replaces the first row.
+    """
+    unknown = set(checkin.answers) - set(CHECKIN_ANSWER_COLUMNS)
+    if unknown:
+        raise ValueError(f"unknown check-in answers: {sorted(unknown)}")
+    cols = (
+        "checkin_id", "session_id", "participant_id", "questionnaire_version",
+        "opened_utc", "submitted_utc", "utc_offset_min",
+        *CHECKIN_ANSWER_COLUMNS,
+        "rest_status", "rest_start_utc", "rest_end_utc",
+    )
+    values = (
+        checkin.checkin_id, checkin.session_id, checkin.participant_id,
+        checkin.questionnaire_version, checkin.opened_utc, checkin.submitted_utc,
+        checkin.utc_offset_min,
+        *(checkin.answers.get(c) for c in CHECKIN_ANSWER_COLUMNS),
+        checkin.rest_status, checkin.rest_start_utc, checkin.rest_end_utc,
+    )
+    conn = sqlite3.connect(db_path, timeout=5.0)
+    try:
+        # The recorder normally created the file already; a check-in that
+        # comes first (strap connected before any session row) must not fail.
+        conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
+        conn.execute(
+            f"INSERT OR REPLACE INTO checkin ({', '.join(cols)}) "
+            f"VALUES ({', '.join('?' * len(cols))})",
+            values,
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def append_session_note(db_path: str | Path, session_id: str, text: str) -> None:
@@ -185,14 +243,21 @@ class SqliteSink:
             conn.execute("ALTER TABLE game_snapshot ADD COLUMN is_dead INTEGER")
         if "respawn_timer_s" not in snap_cols:
             conn.execute("ALTER TABLE game_snapshot ADD COLUMN respawn_timer_s REAL")
+        # Schema version 5: idle sessions and the local time offset.
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(session)")}
+        if "kind" not in cols:
+            conn.execute("ALTER TABLE session ADD COLUMN kind TEXT")
+        if "utc_offset_min" not in cols:
+            conn.execute("ALTER TABLE session ADD COLUMN utc_offset_min INTEGER")
         conn.execute(
             "INSERT INTO session (session_id, participant_id, session_index, "
-            "started_utc, ended_utc, mono_anchor_ns, app_version, schema_version, notes) "
-            "VALUES (?,?,?,?,?,?,?,?,?)",
+            "started_utc, ended_utc, mono_anchor_ns, app_version, schema_version, "
+            "notes, kind, utc_offset_min) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
                 meta.session_id, meta.participant_id, meta.session_index,
                 meta.started_utc, meta.ended_utc, meta.mono_anchor_ns,
                 meta.app_version, meta.schema_version, meta.notes,
+                meta.kind, meta.utc_offset_min,
             ),
         )
         conn.commit()
@@ -254,7 +319,8 @@ class SqliteSink:
     def set_active_riot_id(self, riot_id: str) -> None:
         """Record the recording player's Riot Name#TAG, once known (EW-41-adjacent).
 
-        Kept separate from the pseudonymous `participant_id`; used by RiftLab to
+        Kept separate from `participant_id` (what the participant typed in);
+        used by RiftLab to
         split kill/death/assist from enemy events instead of "Enemy kills" only.
         """
         if self._conn is None:

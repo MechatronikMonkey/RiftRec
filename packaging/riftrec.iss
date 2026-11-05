@@ -10,13 +10,13 @@
 ; launching RiftRec belongs to the same decision. The Start-menu (and optional
 ; desktop) shortcut is how a session gets started.
 ;
-; Build:  ISCC.exe /DAppVersion=0.1.0 packaging\riftrec.iss
+; Build:  ISCC.exe /DAppVersion=0.2.0 packaging\riftrec.iss
 ; Signed: ISCC.exe /DSIGN /Ssigntool="<signtool command> $f" ... (see README)
 
 #ifndef AppVersion
   ; Fallback for a bare ISCC run. tests/test_packaging.py keeps this in step
   ; with riftrec.__version__, so an unversioned build is never mislabelled.
-  #define AppVersion "0.1.0"
+  #define AppVersion "0.2.0"
 #endif
 
 #define AppName "RiftRec"

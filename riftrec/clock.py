@@ -30,3 +30,13 @@ class SessionClock:
         mono = time.perf_counter_ns()
         utc = self._utc0 + timedelta(microseconds=(mono - self._mono0) / 1000)
         return mono, utc.isoformat()
+
+
+def local_utc_offset_min() -> int:
+    """The local UTC offset right now, in minutes east of UTC (EW-101).
+
+    Stored per session rather than once per file: a run that crosses the
+    switch to or from daylight saving time gets the right hour on both sides.
+    """
+    offset = datetime.now().astimezone().utcoffset()
+    return int(offset.total_seconds() // 60) if offset is not None else 0

@@ -31,6 +31,12 @@ def _prefs_path() -> Path:
 class Prefs:
     participant_id: Optional[str] = None
     storage_folder: Optional[str] = None
+    # Daily check-in bookkeeping (schema 5). Days are study days as ISO dates
+    # (see checkin_questions.study_day). Kept here rather than read back from
+    # the .sqlite files, because every run writes a new file.
+    last_checkin_day: Optional[str] = None   # day the questionnaire was submitted
+    prompt_day: Optional[str] = None         # day `prompts` counts for
+    prompts: int = 0                         # times shown on prompt_day
 
 
 def load_prefs() -> Prefs:
@@ -42,9 +48,16 @@ def load_prefs() -> Prefs:
             cp.read(path, encoding="utf-8")
             if cp.has_section(_SECTION):
                 s = cp[_SECTION]
+                try:
+                    prompts = int(s.get("prompts") or 0)
+                except ValueError:
+                    prompts = 0
                 return Prefs(
                     participant_id=(s.get("participant_id") or "").strip() or None,
                     storage_folder=(s.get("storage_folder") or "").strip() or None,
+                    last_checkin_day=(s.get("last_checkin_day") or "").strip() or None,
+                    prompt_day=(s.get("prompt_day") or "").strip() or None,
+                    prompts=prompts,
                 )
     except (OSError, configparser.Error):
         pass  # corrupt/unreadable prefs must never block recording
@@ -58,6 +71,9 @@ def save_prefs(prefs: Prefs) -> None:
     cp[_SECTION] = {
         "participant_id": prefs.participant_id or "",
         "storage_folder": prefs.storage_folder or "",
+        "last_checkin_day": prefs.last_checkin_day or "",
+        "prompt_day": prefs.prompt_day or "",
+        "prompts": str(prefs.prompts),
     }
     try:
         path.parent.mkdir(parents=True, exist_ok=True)

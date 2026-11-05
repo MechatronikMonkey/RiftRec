@@ -6,6 +6,8 @@ Menu:
 - the strap's battery level
 - "Show status…" - the same reason in a window, also the double-click action
 - "Add note…" - a small text prompt for a per-session note
+- "Daily check-in…" - opens the questionnaire by hand (it also opens by itself
+  once a day, see app/checkin.py)
 - "Stop and exit" - stops the recorder and quits
 
 There is deliberately no autostart-with-Windows entry: a recording has to
@@ -55,6 +57,7 @@ class TrayController:
         self._report: StatusReport = StatusReport(state=self._current)
         self._on_quit: Optional[Callable[[], None]] = None
         self._on_note: Optional[Callable[[str], None]] = None
+        self._on_checkin: Optional[Callable[[], None]] = None
         self._snapshot: Optional[Callable[[], dict]] = None
         self._battery: Optional[int] = None
 
@@ -66,6 +69,7 @@ class TrayController:
             pystray.MenuItem("Show status…", self._show_status, default=True),
             pystray.MenuItem("Open data folder", self._open_folder),
             pystray.MenuItem("Add note…", self._add_note),
+            pystray.MenuItem("Daily check-in…", self._open_checkin),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Stop and exit", self._quit),
         ]
@@ -83,6 +87,9 @@ class TrayController:
 
     def set_on_note(self, cb: Callable[[str], None]) -> None:
         self._on_note = cb
+
+    def set_on_checkin(self, cb: Callable[[], None]) -> None:
+        self._on_checkin = cb
 
     def set_status_source(self, fn: Callable[[], dict]) -> None:
         """Supply the snapshot the status window renders."""
@@ -150,8 +157,12 @@ class TrayController:
         The last step of every session is sending the file back, and a
         participant should not have to remember a path they picked weeks ago.
         """
-        data = self._status_source() if self._status_source else {}
+        data = self._snapshot() if self._snapshot else {}
         open_location(data.get("db_path"))
+
+    def _open_checkin(self, icon=None, item=None) -> None:
+        if self._on_checkin is not None:
+            self._on_checkin()
 
     def _add_note(self, icon, item) -> None:
         def worker() -> None:

@@ -18,6 +18,7 @@ import asyncio
 import threading
 
 from ..rte.supervisor import SupervisorService
+from .checkin import CheckinController
 from .settings_window import prompt_settings
 from .tray import TrayController
 from .tray_icons import battery_text
@@ -33,6 +34,11 @@ def run_gui() -> None:
     tray = TrayController(service.status, service.report)
     tray.set_on_note(service.add_note)
     service.on_alert = tray.alert          # silent failures push, not wait (EW-89)
+    # Daily check-in + resting minute (schema 5): offered by the supervisor
+    # once the strap delivers beats between matches, or opened from the tray.
+    checkin = CheckinController(config, service)
+    service.on_ready_for_checkin = checkin.on_ready
+    tray.set_on_checkin(checkin.open_manual)
     tray.set_status_source(lambda: {
         "report": service.report.state,
         "battery": battery_text(service.battery.state),
@@ -66,10 +72,10 @@ def run_gui() -> None:
     thread.start()
     tray.run()          # blocks on the main thread until the tray stops
     thread.join(timeout=15)
-    # The supervisor deletes the file again when the run recorded no match at
-    # all (EW-89), so report what actually happened rather than a path that is
-    # no longer there.
+    # The supervisor deletes the file again when the run recorded nothing at
+    # all - strap never connected (EW-89) - so report what actually happened
+    # rather than a path that is no longer there.
     if config.db_path.exists():
         print(f"Recorder stopped -> {config.db_path}")
     else:
-        print("Recorder stopped - no match was recorded, no file kept.")
+        print("Recorder stopped - nothing was recorded, no file kept.")

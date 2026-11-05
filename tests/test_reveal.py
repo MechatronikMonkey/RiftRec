@@ -93,7 +93,9 @@ def test_the_tray_opens_the_folder_the_recording_goes_to(monkeypatch, tmp_path) 
                         lambda target: opened.append(target))
 
     controller = tray_module.TrayController.__new__(tray_module.TrayController)
-    controller._status_source = lambda: {"db_path": str(db)}
+    # Through the setter the runner uses - setting a private attribute here
+    # once hid that the menu entry read one that did not exist.
+    controller.set_status_source(lambda: {"db_path": str(db)})
     controller._open_folder()
 
     assert opened == [str(db)]

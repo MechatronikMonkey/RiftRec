@@ -97,7 +97,7 @@ _HEADLINES: dict[Activity, str] = {
     Activity.NO_SKIN_CONTACT: "Recording — strap has lost contact",
     Activity.GAME_NOT_VISIBLE: "League is running, the game is not visible",
     Activity.STORAGE_FAILED: "Cannot save the recording",
-    Activity.NO_PARTICIPANT_ID: "Not recording — no participant ID",
+    Activity.NO_PARTICIPANT_ID: "Not recording — no Riot name",
     Activity.STOPPED: "Stopped",
 }
 
@@ -134,8 +134,8 @@ def detail_for(report: StatusReport) -> str:
         return ("Heart rate is paused. Check the strap is still on and stay near "
                 f"the PC — RiftRec keeps trying{_tries(report)}.{tail}")
     if a is Activity.WAITING_FOR_MATCH:
-        return ("The strap is connected. Start a game — "
-                "recording begins on its own when the match does.")
+        return ("The strap is connected and your heart rate is being saved. "
+                "Start a game — the match is picked up on its own.")
     if a is Activity.RECORDING:
         return "Heart rate and game data are being saved."
     if a is Activity.NO_HEART_RATE:
@@ -151,7 +151,7 @@ def detail_for(report: StatusReport) -> str:
         return ("The folder RiftRec saves to is not reachable. Data is kept in "
                 "memory and written as soon as the folder is back.")
     if a is Activity.NO_PARTICIPANT_ID:
-        return ("Enter the participant ID you were given in the settings, "
+        return ("Enter your Riot name in the settings, "
                 "then start RiftRec again.")
     if a is Activity.STOPPED:
         return "RiftRec is not recording. Start it again from the Start menu."

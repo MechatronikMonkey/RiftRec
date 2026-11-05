@@ -2,10 +2,12 @@
 
 RiftRec is a hands-off PC recorder for esports-performance sessions. It reads live
 **heart rate / RR** from a **Polar H10** chest strap (Bluetooth) together with in-game
-events from the **Riot Live Client Data API**, time-synchronises both, and writes each
-match to a single SQLite file that the **RiftLab** analysis tool reads. Once started it
-runs unattended in the system tray: it detects match start and end on its own and records
-one session per match.
+events from the **Riot Live Client Data API**, time-synchronises both, and writes them to
+a single SQLite file per run that the **RiftLab** analysis tool reads. Once started it
+runs unattended in the system tray: heart rate is recorded from the moment the strap
+connects, match start and end are detected on their own, and each match and each stretch
+between matches becomes its own session in the file. Once a day it asks a short check-in
+questionnaire followed by a one-minute resting measurement.
 
 ---
 
@@ -85,10 +87,10 @@ Put the strap on, then open the **Start menu** and click **RiftRec**.
 
 ![Session settings window](howto-start-riftrec-first-setup.png)
 
-In the settings window, type your **Participant ID** (1, required — your personal study
-code). Leave **Start session #** at 0 and the **H10 device** on *auto* (or click **Scan** to
-pick it) (2). Choose a **Storage folder** for the recordings (3), then click **Save & run**
-(4). Your participant ID and folder are remembered for next time.
+In the settings window, type your **Riot name** (1, required — `Name#TAG`, the account you
+play on). Leave **Start session #** at 0 and the **H10 device** on *auto* (or click **Scan**
+to pick it) (2). Choose a **Storage folder** for the recordings (3), then click **Save & run**
+(4). Your Riot name and folder are remembered for next time.
 
 Prefer an ordinary local folder. If you pick one that a sync client owns (OneDrive, Dropbox,
 …) RiftRec will ask first — such a folder can disappear mid-session when syncing pauses or
@@ -102,14 +104,33 @@ icons (1); the RiftRec icon turns **green** once the H10 is connected and ready 
 **red** while a match is being recorded. Just play — matches are detected and recorded
 automatically.
 
+Your heart rate is recorded from the moment the strap connects — in the client, in champion
+select, on the loading screen and between games too, not only during matches.
+
+### Daily check-in — about two minutes, once a day
+
+The first time each day the strap is connected and no game is running, a **check-in window**
+opens by itself. Answer the questions — each one says underneath exactly what it means, so
+read that grey line — and click **Submit**. You may leave any question blank you'd rather
+not answer. Your resting measurement is already running while
+you answer; please stay seated.
+
+After *Submit* comes **one quiet minute**: sit back, hands off mouse and keyboard, breathe
+normally, don't talk. The window counts down and closes by itself. That minute is your
+resting value for the day, so please do it — *Skip* is there for when you really cannot.
+
+A "day" starts at 5 am: a session that runs past midnight does not ask again. If you close the
+window without answering, it comes back once after your next game. You can also open it
+yourself any time with **Daily check-in…** in the tray menu.
+
 **If you are ever unsure whether it is working, ask it.** Hover the icon, or right-click it:
 the top two lines say what RiftRec is doing *and why* in plain words — for example
 *"Chest strap not found — put the H10 on and moisten the electrodes, then give it a moment;
 RiftRec keeps trying (attempt 12)."* **Show status…** (or a double-click on the icon) opens
 the same thing in a window, together with the folder your recordings are going to.
 **Open data folder** opens that folder in Explorer with the current recording already
-selected — that is the one you attach to your email. The rest of the menu is *Add note…*
-and *Stop and exit*.
+selected — that is the one you attach to your email. The rest of the menu is *Add note…*,
+*Daily check-in…* and *Stop and exit*.
 
 **And it speaks up by itself.** Some problems look exactly like everything working — the app
 is running, the icon is there, you are playing, and nothing is being recorded. When RiftRec
@@ -146,9 +167,9 @@ zero: a strap that dies mid-match costs the whole session. The value refreshes a
 - **RiftRec is simply gone:** no tray icon, no Start-menu entry. Almost always the antivirus
   — see [If your antivirus objects](#if-your-antivirus-objects). RiftRec cannot warn you
   about this one, because it is no longer there to warn you.
-- **No file where you expected one:** a run that never recorded a match deletes its own
-  (empty) `.sqlite` again, so only files with real data stay in your folder. **Show status…**
-  tells you how many matches this run has recorded.
+- **No file where you expected one:** a run in which the strap never connected deletes its
+  own (empty) `.sqlite` again, so only files with real data stay in your folder. **Show
+  status…** tells you how many matches this run has recorded.
 - **Orange triangle in the tray:** RiftRec is running but something makes the recording
   unusable. Hover it or open **Show status…** for the reason — it is one of the four in the
   table above.
@@ -242,7 +263,7 @@ python -m riftrec gui
 Pilots get the installer (see below). `Start RiftRec.bat` is the source-checkout
 equivalent: it creates a local `.venv`, installs only the recorder runtime deps
 (`requirements-recorder.txt` — no PMD/dongle spike packages), and launches the tray GUI
-windowless. Participant id + storage folder persist in `%APPDATA%\RiftRec\prefs.ini`; output
+windowless. Riot name, storage folder and the check-in bookkeeping persist in `%APPDATA%\RiftRec\prefs.ini`; output
 is logged to `%APPDATA%\RiftRec\riftrec.log`.
 
 Tests (no H10, no match): `PYTHONPATH=. python -m pytest tests/`, or run a single file, e.g.
@@ -289,11 +310,27 @@ see, which on a participant's PC looks like a window that simply never opens.
 ## Data schema (SQLite = contract to RiftLab)
 
 `riftrec/storage/schema.sql` is authoritative. Tables: `session` (header + `mono_anchor_ns` /
-`started_utc` as the mono→UTC anchor, `participant_id`, `active_riot_id`), `hr_sample`
-(incl. `contact`), `rr_interval` (own table, the load-bearing HRV signal), `game_event`
-(deduplicated by Riot `EventID`), `game_snapshot` (KDA / CS / gold trend), `gap` (dropout
-marker), plus the raw channels `hr_raw` and `game_raw`. Schema version in
-`riftrec/__init__.py:SCHEMA_VERSION`.
+`started_utc` as the mono→UTC anchor, `participant_id`, `active_riot_id`, `kind`,
+`utc_offset_min`), `hr_sample` (incl. `contact`), `rr_interval` (own table, the load-bearing
+HRV signal), `game_event` (deduplicated by Riot `EventID`), `game_snapshot` (KDA / CS / gold
+trend, death timer), `device_info` (which strap, firmware, battery), `gap` (dropout marker),
+`checkin` (daily questionnaire + resting window), plus the raw channels `hr_raw` and
+`game_raw`. Schema version in `riftrec/__init__.py:SCHEMA_VERSION`.
+
+**Schema 5 — matches and the time in between.** Since 0.2.0 heart rate is recorded from strap
+connect to stop. A file holds a sequence of `session` rows: `kind = 'idle'` for the stretches
+between matches (lobby, champion select, loading screen, post-game, the resting minute) and
+`kind = 'match'` for games. Idle rows have `session_index` NULL and no `game_*` rows; only
+matches count up `session_index`. Filter on `kind` (NULL in older files means `'match'`).
+`utc_offset_min` is the local offset at the start of each row (EW-101), for time of day.
+
+**`checkin`** — one row per check-in window. The answer codes are documented in
+`schema.sql` and defined, with the exact wording shown to participants, in
+`riftrec/app/checkin_questions.py` (`QUESTIONNAIRE_VERSION`). The heart rate is not stored
+here: `[rest_start_utc, rest_end_utc]` is a window on the `hr_sample` / `rr_interval` time
+axis of the idle session that was running. `rest_status` is `completed`, `skipped` or
+`aborted` (a game started, or the window was closed). A row with `submitted_utc` NULL means
+the questionnaire was opened and closed unanswered.
 
 `gap.source` says what was lost, and is worth reading before trusting a stretch of signal:
 

@@ -3,8 +3,13 @@
 Start once, then run unattended: the Polar H10 stays connected, and the Riot
 Live Client Data API is watched continuously. Each detected match is recorded as
 its own session row (auto-incrementing session_index) into ONE SQLite file;
-match start and end are detected automatically. HR/RR arriving between matches
-is discarded.
+match start and end are detected automatically.
+
+Heart rate is recorded from the moment the strap connects, not only during
+matches (schema 5, EW-65): the stretches between matches - lobby, champion
+select, loading screen, post-game, the daily resting measurement - are their own
+session rows with kind='idle'. Nothing the strap sends is thrown away; the
+analysis decides what it uses.
 
 The per-match session management (_open_session / _on_hr / _record_riot /
 _close_session) is synchronous so it can be unit-tested deterministically
@@ -23,7 +28,7 @@ from datetime import datetime, timezone
 from typing import Callable, Optional
 
 from .. import SCHEMA_VERSION, __version__
-from ..clock import SessionClock
+from ..clock import SessionClock, local_utc_offset_min
 from ..config import RecorderConfig
 from ..hal.ble import BleTransport
 from ..model import (
@@ -55,6 +60,11 @@ _ALLGAMEDATA = "/liveclientdata/allgamedata"
 # schema change and breaks nothing (EW-89).
 CONTACT_GAP_SOURCE = "h10_contact"
 
+# How fresh the last RR interval must be for the daily check-in to be offered.
+# The resting measurement is worthless without beats, so the window only opens
+# once the strap is demonstrably reading the skin.
+CHECKIN_RR_FRESH_S = 5.0
+
 # Which health issue replaces the tray line, and with which words. BATTERY_LOW
 # is deliberately absent: the battery already has its own line in the menu, and
 # overwriting "Recording match 3" with a battery notice would hide the more
@@ -71,10 +81,14 @@ _HEALTH_ACTIVITIES = frozenset(_ISSUE_ACTIVITY.values())
 class _Session:
     """Bookkeeping for the currently recording match."""
 
-    def __init__(self, sink: SqliteSink, clock: SessionClock, session_id: str) -> None:
+    def __init__(
+        self, sink: SqliteSink, clock: SessionClock, session_id: str,
+        kind: str = "match",
+    ) -> None:
         self.sink = sink
         self.clock = clock
         self.session_id = session_id
+        self.kind = kind
         self.last_event_id: Optional[int] = None
         self.last_snapshot_mono = 0
         self.active_riot_id: Optional[str] = None
@@ -136,6 +150,28 @@ class SupervisorService:
         # Set by the runner to the tray's notifier: these situations lose data
         # while nobody is looking, so they push instead of waiting to be read.
         self.on_alert: Optional[Callable[[Issue, bool], None]] = None
+        # Set by the runner to the check-in controller. Called once per idle
+        # stretch, as soon as the strap delivers beats and no match is live;
+        # whether a check-in is actually due today is the controller's call.
+        self.on_ready_for_checkin: Optional[Callable[[], None]] = None
+        self._checkin_offered = False
+
+    # -- what is being recorded right now ---------------------------------
+
+    @property
+    def match_live(self) -> bool:
+        """True while a match (not an idle stretch) is being recorded.
+
+        Read from other threads (check-in window); a reference read is atomic.
+        """
+        cur = self._current
+        return cur is not None and cur.kind == "match"
+
+    @property
+    def current_session_id(self) -> Optional[str]:
+        """The session rows are being written to right now, of either kind."""
+        cur = self._current
+        return cur.session_id if cur is not None else None
 
     # -- status publishing (EW-89) ----------------------------------------
 
@@ -157,7 +193,7 @@ class SupervisorService:
             state=state,
             activity=activity,
             attempts=self._connect_attempts,
-            match_index=self._session_index if self._current else None,
+            match_index=self._session_index if self.match_live else None,
             cause=cause,
         ))
 
@@ -175,31 +211,46 @@ class SupervisorService:
 
     # -- per-match session management (synchronous, unit-testable) --------
 
-    def _open_session(self) -> str:
-        self._session_index += 1
+    def _open_session(self, kind: str = "match") -> str:
+        """Start a new session row: a match, or an idle stretch between them.
+
+        Only matches count up `session_index`; an idle stretch has none, so
+        "match 3" means the third game no matter how often the player sat in
+        the lobby in between.
+        """
+        is_match = kind == "match"
+        if is_match:
+            self._session_index += 1
         clock = SessionClock()
         sink = SqliteSink(self._config.db_path)
         session_id = str(uuid.uuid4())
-        self._last_session_id = session_id
         sink.open_session(SessionMeta(
             session_id=session_id,
             participant_id=self._config.participant_id,
-            session_index=self._session_index,
+            session_index=self._session_index if is_match else None,
             started_utc=clock.started_utc,
             mono_anchor_ns=clock.mono_anchor_ns,
             app_version=__version__,
             schema_version=SCHEMA_VERSION,
-            notes=self._config.notes,
+            notes=self._config.notes if is_match else None,
+            kind=kind,
+            utc_offset_min=local_utc_offset_min(),
         ))
-        self._current = _Session(sink, clock, session_id)
-        # Judge this match on its own: heart rate from the previous one must
-        # not count as 'recent', or a fresh match would look healthy for a
-        # minute (or alarm instantly) on stale timestamps.
-        self._match_started_mono = time.monotonic()
-        self._last_hr_mono = None
-        self._last_rr_mono = None
+        self._current = _Session(sink, clock, session_id, kind)
+        if is_match:
+            self._last_session_id = session_id
+            # Judge this match on its own: heart rate from the previous one
+            # must not count as 'recent', or a fresh match would look healthy
+            # for a minute (or alarm instantly) on stale timestamps.
+            self._match_started_mono = time.monotonic()
+            self._last_hr_mono = None
+            self._last_rr_mono = None
+            # The next idle stretch offers the check-in again; the controller
+            # decides whether one is still due.
+            self._checkin_offered = False
         self._write_device_info()
-        self._publish(RecorderState.RECORDING, Activity.RECORDING)
+        if is_match:
+            self._publish(RecorderState.RECORDING, Activity.RECORDING)
         return session_id
 
     def _write_device_info(self) -> None:
@@ -218,7 +269,11 @@ class SupervisorService:
         cur.sink.write(replace(info, utc=utc))
 
     def _on_hr(self, payload: bytes) -> None:
-        """H10 notify callback. Between matches (no session) HR is discarded."""
+        """H10 notify callback: into whatever session is open, match or idle.
+
+        The idle session opens on the watch tick right after the strap
+        connects, so only the first beats of a run can arrive with no session.
+        """
         cur = self._current
         if cur is None:
             return
@@ -238,7 +293,7 @@ class SupervisorService:
 
     def _record_riot(self, data: dict) -> None:
         cur = self._current
-        if cur is None:
+        if cur is None or cur.kind != "match":
             return
         if cur.active_riot_id is None:
             rid = active_riot_id(data)
@@ -307,8 +362,9 @@ class SupervisorService:
             self._storage_error = str(exc)
         finally:
             self._current = None
-            self.matches_recorded += 1
-            self._publish(RecorderState.READY, Activity.WAITING_FOR_MATCH)
+            if cur.kind == "match":
+                self.matches_recorded += 1
+                self._publish(RecorderState.READY, Activity.WAITING_FOR_MATCH)
 
     # -- health monitoring: the failures that look like success (EW-89) ---
 
@@ -323,7 +379,7 @@ class SupervisorService:
         issues = active_issues(
             Signals(
                 now=now,
-                match_live=self._current is not None,
+                match_live=self.match_live,
                 last_hr=self._last_hr_mono,
                 last_rr=self._last_rr_mono,
                 last_game_data=self._last_game_mono,
@@ -350,7 +406,7 @@ class SupervisorService:
         matches it is the only way to tell 'nobody is playing' from 'somebody
         is playing and we cannot see it'.
         """
-        if self._current is not None:
+        if self.match_live:
             return True
         due = (
             self._league_checked_mono is None
@@ -415,7 +471,7 @@ class SupervisorService:
             # The last thing shown was a warning that no longer applies.
             if not self._h10_up:
                 return   # the link supervisor states the truth every tick
-            if self._current is not None:
+            if self.match_live:
                 self._publish(RecorderState.RECORDING, Activity.RECORDING)
             else:
                 self._publish(RecorderState.READY, Activity.WAITING_FOR_MATCH)
@@ -444,6 +500,40 @@ class SupervisorService:
         """Open a session for a match that just started, tolerating storage."""
         return self._guard_storage(self._open_session, "opening the recording")
 
+    def _start_match(self) -> bool:
+        """A match just appeared: end the idle stretch, open the match."""
+        if self._current is not None:          # the idle stretch before it
+            self._close_session()
+        return self._try_open_session()
+
+    def _ensure_idle_session(self) -> None:
+        """Between matches with the strap up: make sure the beats are kept.
+
+        Opened only once the strap is connected - no file is started for a run
+        that never got a heartbeat. Once open, it stays open through a strap
+        dropout (the gap is recorded) until the next match or the stop.
+        """
+        if self._current is None and self._h10_up:
+            self._guard_storage(lambda: self._open_session("idle"),
+                                "opening the recording")
+
+    def _offer_checkin(self) -> None:
+        """Tell the check-in controller the moment is right, once per stretch.
+
+        Right means: no match, and the strap demonstrably reading the skin -
+        a resting measurement without beats would be a minute wasted.
+        """
+        if (self._checkin_offered or self.on_ready_for_checkin is None
+                or self.match_live or not self._h10_up
+                or self._last_rr_mono is None
+                or time.monotonic() - self._last_rr_mono > CHECKIN_RR_FRESH_S):
+            return
+        self._checkin_offered = True
+        try:
+            self.on_ready_for_checkin()
+        except Exception as exc:  # a questionnaire must never stop a recording
+            print(f"[warn] could not offer the check-in: {exc}")
+
     # -- H10 link supervision (EW-42) -------------------------------------
 
     def _close_h10_gap(self) -> None:
@@ -461,7 +551,7 @@ class SupervisorService:
         self._h10_up = True
         self._connect_attempts = 0
         self._close_h10_gap()
-        if self._current is not None:
+        if self.match_live:
             self._publish(RecorderState.RECORDING, Activity.RECORDING)
         else:
             self._publish(RecorderState.READY, Activity.WAITING_FOR_MATCH)
@@ -552,14 +642,15 @@ class SupervisorService:
         self._write_device_info()
 
     def add_note(self, text: str) -> bool:
-        """Attach a note to the current session, or the last one between matches.
+        """Attach a note to the current match, or the last one between matches.
 
+        Notes are about games, so an idle stretch never receives one.
         Returns False if there is nothing to attach to yet (no match recorded).
         """
         text = (text or "").strip()
         if not text:
             return False
-        sid = self._current.session_id if self._current else self._last_session_id
+        sid = self._current.session_id if self.match_live else self._last_session_id
         if sid is None:
             return False
         append_session_note(self._config.db_path, sid, text)
@@ -596,14 +687,22 @@ class SupervisorService:
                 await self._keep_h10_connected(transport)   # reconnect + gap (EW-42)
                 data = await fetch()
                 if data is None:
-                    if self._current is not None:
+                    if self.match_live:
                         self._close_session()      # match ended (close flushes)
+                    self._ensure_idle_session()    # keep the beats in between
+                    now = time.monotonic()
+                    if (self._current is not None
+                            and now - last_flush >= self._config.flush_interval_s):
+                        self._guard_storage(self._current.sink.flush,
+                                            "writing the recording")
+                        last_flush = now
+                    self._offer_checkin()
                     self._check_health()           # is League up and we are blind?
                     await asyncio.sleep(self._config.poll_interval_s)
                     continue
                 self._last_game_mono = time.monotonic()
-                if self._current is None:
-                    if not self._try_open_session():   # match started
+                if not self.match_live:
+                    if not self._start_match():        # match started
                         self._check_health()           # storage gone - say so
                         await asyncio.sleep(self._config.poll_interval_s)
                         continue

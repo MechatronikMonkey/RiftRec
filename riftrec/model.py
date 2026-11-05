@@ -9,7 +9,7 @@ third time axis that is robust against reconnects.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Union
 
 
@@ -169,6 +169,10 @@ class SessionMeta:
 
     `mono_anchor_ns` + `started_utc` form the anchor that maps every `mono_ns`
     of a record onto UTC.
+
+    `kind` is "match" for a recorded game and "idle" for the heart rate
+    between games (schema 5). `utc_offset_min` is the local offset at the
+    start, so the analysis can tell an afternoon from a night (EW-101).
     """
 
     session_id: str
@@ -180,3 +184,28 @@ class SessionMeta:
     schema_version: int
     notes: Optional[str] = None
     ended_utc: Optional[str] = None
+    kind: str = "match"
+    utc_offset_min: Optional[int] = None
+
+
+@dataclass(slots=True)
+class Checkin:
+    """One daily check-in: questionnaire answers plus the resting window.
+
+    Answers are the codes from `app.checkin_questions`, keyed by question id
+    (= column name). Written in two steps from the check-in window: once when
+    the questionnaire is submitted, once more when the resting measurement
+    ends, so a crash during the minute of rest keeps the answers.
+    """
+
+    checkin_id: str
+    questionnaire_version: int
+    opened_utc: str
+    session_id: Optional[str] = None
+    participant_id: Optional[str] = None
+    submitted_utc: Optional[str] = None
+    utc_offset_min: Optional[int] = None
+    answers: dict = field(default_factory=dict)
+    rest_status: Optional[str] = None
+    rest_start_utc: Optional[str] = None
+    rest_end_utc: Optional[str] = None
